@@ -4,6 +4,8 @@ import jwt from "jsonwebtoken";
 
 import userModel from "../models/userModel.js";
 import adminModel from "../models/adminModel.js";
+import tempUserModel from "../models/tempUserModel.js";
+import sendOtpEmail from "../utils/sendOtpEmail.js";
 
 const createToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET);
@@ -37,20 +39,26 @@ export const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // checking user already exist or not
+    // Check if user already exists in main or temp collection
     const exists = await userModel.findOne({ email });
     if (exists) {
       return res.json({ success: false, message: "User already exists" });
     }
+    const tempExists = await tempUserModel.findOne({ email });
+    if (tempExists) {
+      return res.json({
+        success: false,
+        message: "Please verify OTP sent to your email",
+      });
+    }
 
-    //validating email formate and strong password
+    // Validate email and password
     if (!validator.isEmail(email)) {
       return res.json({
         success: false,
         message: "Please enter a valid email",
       });
     }
-
     if (password.length < 8) {
       return res.json({
         success: false,
@@ -58,17 +66,76 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    //hashing user password
+    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    const newUser = new userModel({ name, email, password: hashedPassword });
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
 
-    const user = await newUser.save();
+    // Store in tempUser collection
+    await tempUserModel.create({
+      name,
+      email,
+      password: hashedPassword,
+      otp,
+      otpExpires,
+    });
 
-    const token = createToken(user._id);
+    // Send OTP via email
+    try {
+      await sendOtpEmail(email, otp);
+    } catch (err) {
+      // Clean up temp user if email fails
+      await tempUserModel.deleteOne({ email });
+      return res.json({
+        success: false,
+        message: "Failed to send OTP email. Please try again.",
+      });
+    }
 
-    res.json({ success: true, token });
+    res.json({
+      success: true,
+      message:
+        "OTP sent to your email. Please verify to complete registration.",
+    });
+  } catch (e) {
+    console.log(e);
+    res.json({ success: false, message: e.message });
+  }
+};
+
+// OTP verification and final registration
+export const verifyUserOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const tempUser = await tempUserModel.findOne({ email });
+    if (!tempUser) {
+      return res.json({
+        success: false,
+        message: "No registration found for this email.",
+      });
+    }
+    if (tempUser.otp !== otp) {
+      return res.json({ success: false, message: "Invalid OTP." });
+    }
+    if (tempUser.otpExpires < new Date()) {
+      await tempUserModel.deleteOne({ email });
+      return res.json({
+        success: false,
+        message: "OTP expired. Please register again.",
+      });
+    }
+
+    // Move user to main userModel
+    const { name, password } = tempUser;
+    const newUser = new userModel({ name, email, password });
+    await newUser.save();
+    await tempUserModel.deleteOne({ email });
+
+    const token = createToken(newUser._id);
+    res.json({ success: true, token, message: "Registration successful!" });
   } catch (e) {
     console.log(e);
     res.json({ success: false, message: e.message });
@@ -131,12 +198,12 @@ export const registerAdmin = async (req, res) => {
     // Check if this is initial setup (no admins exist) or if called by existing admin
     const adminCount = await adminModel.countDocuments();
     const isInitialSetup = adminCount === 0;
-    
+
     // If not initial setup, must be called by authenticated admin
     if (!isInitialSetup && !req.admin) {
-      return res.json({ 
-        success: false, 
-        message: "Unauthorized. Only existing admins can create new admins." 
+      return res.json({
+        success: false,
+        message: "Unauthorized. Only existing admins can create new admins.",
       });
     }
 
@@ -186,7 +253,9 @@ export const registerAdmin = async (req, res) => {
       success: true,
       token,
       admin: { name: admin.name, email: admin.email },
-      message: isInitialSetup ? "First admin created successfully" : "New admin created successfully"
+      message: isInitialSetup
+        ? "First admin created successfully"
+        : "New admin created successfully",
     });
   } catch (e) {
     console.log(e);
