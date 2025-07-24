@@ -1,4 +1,5 @@
 import express from "express";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import "dotenv/config";
 import connectDB from "./config/mongodb.js";
@@ -7,6 +8,8 @@ import userRouter from "./routes/userRoutes.js";
 import productRouter from "./routes/productRoute.js";
 import cartRouter from "./routes/cartRoute.js";
 import orderRouter from "./routes/orderRoute.js";
+import https from "https";
+import fs from "fs";
 
 //App Config
 const app = express();
@@ -15,7 +18,19 @@ connectDB();
 connectCloudinary();
 //Middlewares
 app.use(express.json());
-app.use(cors());
+app.use(cookieParser());
+app.use(
+  cors({
+    origin: [
+      "https://localhost:3000",
+      "https://localhost:5173",
+      "https://127.0.0.1:5173",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "token"],
+  })
+);
 
 //API endpoints
 app.use("/api/user", userRouter);
@@ -27,8 +42,13 @@ app.get("/", (req, res) => {
   res.send("API WORKING");
 });
 
-app.listen(port, () => {
-  console.log(`Server started on http://localhost:${port} ❤️`);
+const sslOptions = {
+  key: fs.readFileSync(".cert/key.pem"),
+  cert: fs.readFileSync(".cert/cert.pem"),
+};
+
+https.createServer(sslOptions, app).listen(port, () => {
+  console.log(`HTTPS server started on https://localhost:${port} ❤️`);
 });
 
 // smimtiaz58

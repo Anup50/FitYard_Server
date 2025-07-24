@@ -8,7 +8,7 @@ import tempUserModel from "../models/tempUserModel.js";
 import sendOtpEmail from "../utils/sendOtpEmail.js";
 
 const createToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET);
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "1d" });
 };
 //Route for user login
 export const loginUser = async (req, res) => {
@@ -24,7 +24,13 @@ export const loginUser = async (req, res) => {
 
     if (isMatch) {
       const token = createToken(user._id);
-      res.json({ success: true, token });
+      res.cookie("token", token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+        maxAge: 24 * 60 * 60 * 1000, // 1 day
+      });
+      res.json({ success: true, message: "Login successful!" });
     } else {
       return res.json({ success: false, message: "Invalid Credentials" });
     }
@@ -135,7 +141,13 @@ export const verifyUserOtp = async (req, res) => {
     await tempUserModel.deleteOne({ email });
 
     const token = createToken(newUser._id);
-    res.json({ success: true, token, message: "Registration successful!" });
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+    });
+    res.json({ success: true, message: "Registration successful!" });
   } catch (e) {
     console.log(e);
     res.json({ success: false, message: e.message });
@@ -173,13 +185,18 @@ export const adminLogin = async (req, res) => {
       const token = jwt.sign(
         { id: admin._id, email: admin.email, role: admin.role },
         process.env.JWT_SECRET,
-        { expiresIn: "24h" }
+        { expiresIn: "1d" }
       );
-
+      res.cookie("token", token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+        maxAge: 24 * 60 * 60 * 1000, // 1 day
+      });
       res.json({
         success: true,
-        token,
         admin: { name: admin.name, email: admin.email },
+        message: "Admin login successful!",
       });
     } else {
       res.json({ success: false, message: "Invalid credentials" });
@@ -256,6 +273,114 @@ export const registerAdmin = async (req, res) => {
       message: isInitialSetup
         ? "First admin created successfully"
         : "New admin created successfully",
+    });
+  } catch (e) {
+    console.log(e);
+    res.json({ success: false, message: e.message });
+  }
+};
+
+// Get user profile
+export const getUserProfile = async (req, res) => {
+  try {
+    const { userId } = req.body; // userId is set by authUser middleware
+
+    const user = await userModel.findById(userId).select("-password"); // Exclude password
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        cartData: user.cartData,
+      },
+    });
+  } catch (e) {
+    console.log(e);
+    res.json({ success: false, message: e.message });
+  }
+};
+
+// Update user profile
+export const updateUserProfile = async (req, res) => {
+  try {
+    const { userId, name, email, currentPassword, newPassword } = req.body;
+
+    const user = await userModel.findById(userId);
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
+    }
+
+    // If changing password, verify current password
+    if (newPassword) {
+      if (!currentPassword) {
+        return res.json({
+          success: false,
+          message: "Current password is required to change password",
+        });
+      }
+
+      const isCurrentPasswordValid = await bcrypt.compare(
+        currentPassword,
+        user.password
+      );
+      if (!isCurrentPasswordValid) {
+        return res.json({
+          success: false,
+          message: "Current password is incorrect",
+        });
+      }
+
+      if (newPassword.length < 8) {
+        return res.json({
+          success: false,
+          message: "New password must be at least 8 characters long",
+        });
+      }
+
+      // Hash new password
+      const salt = await bcrypt.genSalt(10);
+      const hashedNewPassword = await bcrypt.hash(newPassword, salt);
+      user.password = hashedNewPassword;
+    }
+
+    // Update other fields
+    if (name && name.trim() !== "") {
+      user.name = name.trim();
+    }
+
+    if (email && email !== user.email) {
+      // Validate email format
+      if (!validator.isEmail(email)) {
+        return res.json({
+          success: false,
+          message: "Please enter a valid email",
+        });
+      }
+
+      // Check if email already exists
+      const emailExists = await userModel.findOne({ email });
+      if (emailExists) {
+        return res.json({ success: false, message: "Email already exists" });
+      }
+
+      user.email = email;
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
     });
   } catch (e) {
     console.log(e);
