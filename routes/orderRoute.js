@@ -14,8 +14,8 @@ import authUser from "../middleware/auth.js";
 const orderRouter = express.Router();
 
 //ADMIN FEATURE
-orderRouter.post("/list", adminAuth, allOrders);
-orderRouter.post("/status", adminAuth, updateStatus);
+orderRouter.get("/list", adminAuth, allOrders);
+orderRouter.put("/status", adminAuth, updateStatus);
 
 //PAYMENT FEATURE
 orderRouter.post("/place", authUser, placeOrder);
@@ -23,7 +23,7 @@ orderRouter.post("/stripe", authUser, placeOrderStripe);
 orderRouter.post("/razorpay", authUser, placeOrderRazorpay);
 
 //USER FEATURE
-orderRouter.post("/userorders", authUser, userOrders);
+orderRouter.get("/userorders", authUser, userOrders);
 
 //VERIFY PAYMENT
 orderRouter.post("/verifystripe", authUser, verifyStripe);

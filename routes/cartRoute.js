@@ -3,13 +3,20 @@ import {
   addToCart,
   getUserCart,
   updateCart,
+  getAnyUserCart,
+  getAllUserCarts,
 } from "../controllers/cartController.js";
 import authUser from "../middleware/auth.js";
+import adminAuth from "../middleware/adminAuth.js";
 
 const cartRouter = express.Router();
 
-cartRouter.post("/get", authUser, getUserCart);
+cartRouter.get("/get", authUser, getUserCart);
+// Admin: get any user's cart by userId
+cartRouter.get("/user/:userId", adminAuth, getAnyUserCart);
+// Admin: get all user carts
+cartRouter.get("/all", adminAuth, getAllUserCarts);
 cartRouter.post("/add", authUser, addToCart);
-cartRouter.post("/update", authUser, updateCart);
+cartRouter.put("/update", authUser, updateCart);
 
 export default cartRouter;

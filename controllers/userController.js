@@ -1,11 +1,13 @@
 import validator from "validator";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import axios from "axios";
 
 import userModel from "../models/userModel.js";
 import adminModel from "../models/adminModel.js";
 import tempUserModel from "../models/tempUserModel.js";
 import sendOtpEmail from "../utils/sendOtpEmail.js";
+import { logActivity, logError } from "../utils/logger.js";
 
 const createToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "1d" });
@@ -13,7 +15,20 @@ const createToken = (id) => {
 //Route for user login
 export const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, captcha } = req.body;
+
+    // Verify reCAPTCHA
+    if (!captcha) {
+      return res.json({ success: false, message: "Captcha is required." });
+    }
+    const verifyUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captcha}`;
+    const captchaRes = await axios.post(verifyUrl);
+    if (!captchaRes.data.success) {
+      return res.json({
+        success: false,
+        message: "Captcha verification failed.",
+      });
+    }
 
     const user = await userModel.findOne({ email });
     if (!user) {
@@ -30,12 +45,33 @@ export const loginUser = async (req, res) => {
         sameSite: "none",
         maxAge: 24 * 60 * 60 * 1000, // 1 day
       });
-      res.json({ success: true, message: "Login successful!" });
+      // Fetch user object without password
+      const userData = await userModel.findById(user._id).select("-password");
+
+      // Log successful login
+      logActivity(
+        user._id,
+        "USER_LOGIN",
+        `User ${user.email} logged in successfully`,
+        req.ip,
+        req.get("User-Agent")
+      );
+
+      res.json({ success: true, user: userData, message: "Login successful!" });
     } else {
+      // Log failed login attempt
+      logActivity(
+        null,
+        "LOGIN_FAILED",
+        `Failed login attempt for email: ${email}`,
+        req.ip,
+        req.get("User-Agent")
+      );
       return res.json({ success: false, message: "Invalid Credentials" });
     }
   } catch (e) {
     console.log(e);
+    logError("LOGIN_ERROR", e.message, { email: req.body.email, ip: req.ip });
     res.json({ success: false, message: e.message });
   }
 };
@@ -115,8 +151,21 @@ export const registerUser = async (req, res) => {
       message:
         "OTP sent to your email. Please verify to complete registration.",
     });
+
+    // Log registration attempt
+    logActivity(
+      null,
+      "REGISTRATION_ATTEMPT",
+      `Registration OTP sent to ${email}`,
+      req.ip,
+      req.get("User-Agent")
+    );
   } catch (e) {
     console.log(e);
+    logError("REGISTRATION_ERROR", e.message, {
+      email: req.body.email,
+      ip: req.ip,
+    });
     res.json({ success: false, message: e.message });
   }
 };
@@ -158,8 +207,21 @@ export const verifyUserOtp = async (req, res) => {
       maxAge: 24 * 60 * 60 * 1000, // 1 day
     });
     res.json({ success: true, message: "Registration successful!" });
+
+    // Log successful registration
+    logActivity(
+      newUser._id,
+      "USER_REGISTRATION",
+      `User ${email} registered successfully`,
+      req.ip,
+      req.get("User-Agent")
+    );
   } catch (e) {
     console.log(e);
+    logError("OTP_VERIFICATION_ERROR", e.message, {
+      email: req.body.email,
+      ip: req.ip,
+    });
     res.json({ success: false, message: e.message });
   }
 };
@@ -203,16 +265,41 @@ export const adminLogin = async (req, res) => {
         sameSite: "none",
         maxAge: 24 * 60 * 60 * 1000, // 1 day
       });
+      // Fetch admin object without password
+      const adminData = await adminModel
+        .findById(admin._id)
+        .select("-password");
       res.json({
         success: true,
-        admin: { name: admin.name, email: admin.email },
+        user: adminData,
         message: "Admin login successful!",
       });
+
+      // Log successful admin login
+      logActivity(
+        admin._id,
+        "ADMIN_LOGIN",
+        `Admin ${admin.email} logged in successfully`,
+        req.ip,
+        req.get("User-Agent")
+      );
     } else {
+      // Log failed admin login attempt
+      logActivity(
+        null,
+        "ADMIN_LOGIN_FAILED",
+        `Failed admin login attempt for email: ${email}`,
+        req.ip,
+        req.get("User-Agent")
+      );
       res.json({ success: false, message: "Invalid credentials" });
     }
   } catch (e) {
     console.log(e);
+    logError("ADMIN_LOGIN_ERROR", e.message, {
+      email: req.body.email,
+      ip: req.ip,
+    });
     res.json({ success: false, message: e.message });
   }
 };
@@ -302,21 +389,22 @@ export const registerAdmin = async (req, res) => {
 // Get user profile
 export const getUserProfile = async (req, res) => {
   try {
-    const { userId } = req.body; // userId is set by authUser middleware
+    const { userId, role } = req.body; // userId and role set by authUser middleware
 
-    const user = await userModel.findById(userId).select("-password"); // Exclude password
+    let user;
+    if (role === "admin") {
+      user = await adminModel.findById(userId).select("-password");
+    } else {
+      user = await userModel.findById(userId).select("-password");
+    }
+
     if (!user) {
       return res.json({ success: false, message: "User not found" });
     }
 
     res.json({
       success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        cartData: user.cartData,
-      },
+      user,
     });
   } catch (e) {
     console.log(e);

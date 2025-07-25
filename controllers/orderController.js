@@ -144,8 +144,10 @@ export const userOrders = async (req, res) => {
 //UPDATE ORDER STATUS FROM ADMIN PANEL
 export const updateStatus = async (req, res) => {
   try {
+    // Only admins should reach here (checked by adminAuth middleware)
     const { orderId, status } = req.body;
 
+    // Update order status
     await orderModel.findByIdAndUpdate(orderId, { status });
 
     res.json({ success: true, message: "Status updated" });
