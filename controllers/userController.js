@@ -65,10 +65,19 @@ export const registerUser = async (req, res) => {
         message: "Please enter a valid email",
       });
     }
-    if (password.length < 8) {
+    if (
+      !validator.isStrongPassword(password, {
+        minLength: 8,
+        minLowercase: 1,
+        minUppercase: 1,
+        minNumbers: 1,
+        minSymbols: 1,
+      })
+    ) {
       return res.json({
         success: false,
-        message: "Please enter a strong password",
+        message:
+          "Password must be at least 8 characters long and include uppercase, lowercase, number, and symbol.",
       });
     }
 
@@ -136,6 +145,7 @@ export const verifyUserOtp = async (req, res) => {
 
     // Move user to main userModel
     const { name, password } = tempUser;
+    // Password already validated and hashed in tempUser
     const newUser = new userModel({ name, email, password });
     await newUser.save();
     await tempUserModel.deleteOne({ email });
@@ -239,10 +249,19 @@ export const registerAdmin = async (req, res) => {
     }
 
     // Validate password strength
-    if (password.length < 8) {
+    if (
+      !validator.isStrongPassword(password, {
+        minLength: 8,
+        minLowercase: 1,
+        minUppercase: 1,
+        minNumbers: 1,
+        minSymbols: 1,
+      })
+    ) {
       return res.json({
         success: false,
-        message: "Password must be at least 8 characters long",
+        message:
+          "Password must be at least 8 characters long and include uppercase, lowercase, number, and symbol.",
       });
     }
 
@@ -335,10 +354,19 @@ export const updateUserProfile = async (req, res) => {
         });
       }
 
-      if (newPassword.length < 8) {
+      if (
+        !validator.isStrongPassword(newPassword, {
+          minLength: 8,
+          minLowercase: 1,
+          minUppercase: 1,
+          minNumbers: 1,
+          minSymbols: 1,
+        })
+      ) {
         return res.json({
           success: false,
-          message: "New password must be at least 8 characters long",
+          message:
+            "New password must be at least 8 characters long and include uppercase, lowercase, number, and symbol.",
         });
       }
 

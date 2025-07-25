@@ -3,7 +3,17 @@ import adminModel from "../models/adminModel.js";
 
 const adminAuth = async (req, res, next) => {
   try {
-    const { token } = req.headers;
+    // Read token from cookie, header, or Authorization
+    let token = req.cookies?.token;
+    if (!token && req.headers.token) {
+      token = req.headers.token;
+    }
+    if (!token && req.headers.authorization) {
+      const parts = req.headers.authorization.split(" ");
+      if (parts.length === 2 && parts[0] === "Bearer") {
+        token = parts[1];
+      }
+    }
 
     if (!token) {
       return res.json({
@@ -16,7 +26,7 @@ const adminAuth = async (req, res, next) => {
     const tokenDecoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Check if it's an admin token
-    if (tokenDecoded.role !== "admin") {
+    if (!tokenDecoded.role || tokenDecoded.role !== "admin") {
       return res.json({
         success: false,
         message: "Not Authorized. Admin access required",

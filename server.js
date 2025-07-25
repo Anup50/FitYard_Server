@@ -21,17 +21,12 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(
   cors({
-    origin: [
-      "https://localhost:3000",
-      "https://localhost:5173",
-      "https://127.0.0.1:5173",
-    ],
+    origin: ["https://localhost:3000"],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "token"],
   })
 );
-
 //API endpoints
 app.use("/api/user", userRouter);
 app.use("/api/product", productRouter);
@@ -50,6 +45,3 @@ const sslOptions = {
 https.createServer(sslOptions, app).listen(port, () => {
   console.log(`HTTPS server started on https://localhost:${port} ❤️`);
 });
-
-// smimtiaz58
-// YgDk3SE4kqmRIwjt

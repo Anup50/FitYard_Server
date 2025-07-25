@@ -38,6 +38,9 @@ bower_components
 # Compiled binary addons (https://nodejs.org/api/addons.html)
 build/Release
 
+# Project checklist (do not track)
+checklist.txt
+
 # Dependency directories
 jspm_packages/
 
