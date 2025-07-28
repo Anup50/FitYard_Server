@@ -1,4 +1,5 @@
 import express from "express";
+import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import "dotenv/config";
@@ -16,6 +17,28 @@ const app = express();
 const port = process.env.PORT || 4000;
 connectDB();
 connectCloudinary();
+
+//Security Middlewares
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com"],
+        imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
+        scriptSrc: ["'self'"],
+        connectSrc: [
+          "'self'",
+          "https://localhost:4000",
+          "https://localhost:3000",
+        ],
+      },
+    },
+    crossOriginEmbedderPolicy: false, // Needed for some frontend frameworks
+  })
+);
+
 //Middlewares
 app.use(express.json());
 app.use(cookieParser());
