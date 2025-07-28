@@ -1,4 +1,4 @@
-// Rate limiting middleware for login attempts
+
 import rateLimit from "express-rate-limit";
 
 export const loginRateLimiter = rateLimit({

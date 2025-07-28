@@ -5,6 +5,9 @@ import {
   registerUser,
   registerAdmin,
   verifyUserOtp,
+  verifyLoginOtp,
+  resendRegistrationOtp,
+  resendLoginOtp,
   getUserProfile,
   updateUserProfile,
 } from "../controllers/userController.js";
@@ -16,7 +19,14 @@ const userRouter = express.Router();
 
 userRouter.post("/register", registerUser);
 userRouter.post("/verify-otp", verifyUserOtp);
+userRouter.post(
+  "/resend-registration-otp",
+  loginRateLimiter,
+  resendRegistrationOtp
+);
 userRouter.post("/login", loginRateLimiter, loginUser);
+userRouter.post("/verify-login-otp", loginRateLimiter, verifyLoginOtp);
+userRouter.post("/resend-login-otp", loginRateLimiter, resendLoginOtp);
 userRouter.get("/profile", authUser, getUserProfile);
 userRouter.put("/profile", authUser, updateUserProfile);
 userRouter.post("/admin", adminLogin);

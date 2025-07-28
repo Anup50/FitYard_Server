@@ -6,6 +6,7 @@ import axios from "axios";
 import userModel from "../models/userModel.js";
 import adminModel from "../models/adminModel.js";
 import tempUserModel from "../models/tempUserModel.js";
+import tempLoginModel from "../models/tempLoginModel.js";
 import sendOtpEmail from "../utils/sendOtpEmail.js";
 import { logActivity, logError } from "../utils/logger.js";
 
@@ -38,26 +39,48 @@ export const loginUser = async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
 
     if (isMatch) {
-      const token = createToken(user._id);
-      res.cookie("token", token, {
-        httpOnly: true,
-        secure: true,
-        sameSite: "none",
-        maxAge: 24 * 60 * 60 * 1000, // 1 day
+      // Generate OTP for login verification
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+
+      // Remove any existing temp login for this user
+      await tempLoginModel.deleteOne({ userId: user._id });
+
+      // Store OTP in tempLogin collection
+      await tempLoginModel.create({
+        userId: user._id,
+        email: user.email,
+        otp,
+        otpExpires,
       });
-      // Fetch user object without password
-      const userData = await userModel.findById(user._id).select("-password");
 
-      // Log successful login
-      logActivity(
-        user._id,
-        "USER_LOGIN",
-        `User ${user.email} logged in successfully`,
-        req.ip,
-        req.get("User-Agent")
-      );
+      // Send OTP via email
+      try {
+        await sendOtpEmail(email, otp);
 
-      res.json({ success: true, user: userData, message: "Login successful!" });
+        // Log OTP sent for login
+        logActivity(
+          user._id,
+          "LOGIN_OTP_SENT",
+          `Login OTP sent to ${user.email}`,
+          req.ip,
+          req.get("User-Agent")
+        );
+
+        res.json({
+          success: true,
+          requiresOtp: true,
+          message: "OTP sent to your email. Please verify to complete login.",
+        });
+      } catch (err) {
+        // Clean up temp login if email fails
+        await tempLoginModel.deleteOne({ userId: user._id });
+        logError("LOGIN_OTP_EMAIL_ERROR", err.message, { email, ip: req.ip });
+        return res.json({
+          success: false,
+          message: "Failed to send OTP email. Please try again.",
+        });
+      }
     } else {
       // Log failed login attempt
       logActivity(
@@ -72,6 +95,75 @@ export const loginUser = async (req, res) => {
   } catch (e) {
     console.log(e);
     logError("LOGIN_ERROR", e.message, { email: req.body.email, ip: req.ip });
+    res.json({ success: false, message: e.message });
+  }
+};
+
+// Login OTP verification
+export const verifyLoginOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    // Find temp login record
+    const tempLogin = await tempLoginModel.findOne({ email });
+    if (!tempLogin) {
+      return res.json({
+        success: false,
+        message: "No pending login verification found. Please login again.",
+      });
+    }
+
+    // Check if OTP matches
+    if (tempLogin.otp !== otp) {
+      logActivity(
+        tempLogin.userId,
+        "LOGIN_OTP_FAILED",
+        `Invalid OTP entered for login: ${email}`,
+        req.ip,
+        req.get("User-Agent")
+      );
+      return res.json({ success: false, message: "Invalid OTP" });
+    }
+
+    // Check if OTP has expired
+    if (tempLogin.otpExpires < new Date()) {
+      await tempLoginModel.deleteOne({ email });
+      return res.json({
+        success: false,
+        message: "OTP expired. Please login again.",
+      });
+    }
+
+    // OTP is valid, complete the login
+    const user = await userModel.findById(tempLogin.userId).select("-password");
+    const token = createToken(user._id);
+
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+    });
+
+    // Clean up temp login record
+    await tempLoginModel.deleteOne({ email });
+
+    // Log successful login
+    logActivity(
+      user._id,
+      "USER_LOGIN",
+      `User ${user.email} logged in successfully after OTP verification`,
+      req.ip,
+      req.get("User-Agent")
+    );
+
+    res.json({ success: true, user, message: "Login successful!" });
+  } catch (e) {
+    console.log(e);
+    logError("LOGIN_OTP_VERIFICATION_ERROR", e.message, {
+      email: req.body.email,
+      ip: req.ip,
+    });
     res.json({ success: false, message: e.message });
   }
 };
@@ -500,6 +592,134 @@ export const updateUserProfile = async (req, res) => {
     });
   } catch (e) {
     console.log(e);
+    res.json({ success: false, message: e.message });
+  }
+};
+
+// Resend OTP for registration
+export const resendRegistrationOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.json({ success: false, message: "Email is required" });
+    }
+
+    // Check if there's a pending registration
+    const tempUser = await tempUserModel.findOne({ email });
+    if (!tempUser) {
+      return res.json({
+        success: false,
+        message:
+          "No pending registration found for this email. Please register again.",
+      });
+    }
+
+    // Generate new OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+
+    // Update the existing temp user with new OTP
+    tempUser.otp = otp;
+    tempUser.otpExpires = otpExpires;
+    await tempUser.save();
+
+    // Send new OTP via email
+    try {
+      await sendOtpEmail(email, otp);
+
+      logActivity(
+        null,
+        "REGISTRATION_OTP_RESENT",
+        `Registration OTP resent to ${email}`,
+        req.ip,
+        req.get("User-Agent")
+      );
+
+      res.json({
+        success: true,
+        message:
+          "New OTP sent to your email. Please verify to complete registration.",
+      });
+    } catch (err) {
+      logError("REGISTRATION_OTP_RESEND_EMAIL_ERROR", err.message, {
+        email,
+        ip: req.ip,
+      });
+      return res.json({
+        success: false,
+        message: "Failed to send OTP email. Please try again.",
+      });
+    }
+  } catch (e) {
+    console.log(e);
+    logError("REGISTRATION_OTP_RESEND_ERROR", e.message, {
+      email: req.body.email,
+      ip: req.ip,
+    });
+    res.json({ success: false, message: e.message });
+  }
+};
+
+// Resend OTP for login
+export const resendLoginOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.json({ success: false, message: "Email is required" });
+    }
+
+    // Check if there's a pending login
+    const tempLogin = await tempLoginModel.findOne({ email });
+    if (!tempLogin) {
+      return res.json({
+        success: false,
+        message: "No pending login verification found. Please login again.",
+      });
+    }
+
+    // Generate new OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+
+    // Update the existing temp login with new OTP
+    tempLogin.otp = otp;
+    tempLogin.otpExpires = otpExpires;
+    await tempLogin.save();
+
+    // Send new OTP via email
+    try {
+      await sendOtpEmail(email, otp);
+
+      logActivity(
+        tempLogin.userId,
+        "LOGIN_OTP_RESENT",
+        `Login OTP resent to ${email}`,
+        req.ip,
+        req.get("User-Agent")
+      );
+
+      res.json({
+        success: true,
+        message: "New OTP sent to your email. Please verify to complete login.",
+      });
+    } catch (err) {
+      logError("LOGIN_OTP_RESEND_EMAIL_ERROR", err.message, {
+        email,
+        ip: req.ip,
+      });
+      return res.json({
+        success: false,
+        message: "Failed to send OTP email. Please try again.",
+      });
+    }
+  } catch (e) {
+    console.log(e);
+    logError("LOGIN_OTP_RESEND_ERROR", e.message, {
+      email: req.body.email,
+      ip: req.ip,
+    });
     res.json({ success: false, message: e.message });
   }
 };
