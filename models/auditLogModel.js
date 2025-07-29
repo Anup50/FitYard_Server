@@ -5,12 +5,12 @@ const auditLogSchema = new mongoose.Schema(
     // User Information
     userId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: true,
+      required: false, // Allow null for anonymous users
     },
     userType: {
       type: String,
       required: true,
-      enum: ["User", "Admin"],
+      enum: ["User", "Admin", "Anonymous"],
     },
     userEmail: {
       type: String,
@@ -44,6 +44,14 @@ const auditLogSchema = new mongoose.Schema(
         "FILE_UPLOAD",
         "API_REQUEST",
         "ERROR",
+        // Rate limiting violations
+        "RATE_LIMIT_VIOLATION",
+        "LOGIN_RATE_LIMIT_VIOLATION",
+        "GENERAL_RATE_LIMIT_VIOLATION",
+        "ADMIN_RATE_LIMIT_VIOLATION",
+        "AUDIT_RATE_LIMIT_VIOLATION",
+        "REGISTRATION_RATE_LIMIT_VIOLATION",
+        "PASSWORD_RESET_RATE_LIMIT_VIOLATION",
       ],
     },
 
@@ -57,7 +65,7 @@ const auditLogSchema = new mongoose.Schema(
     // Request details
     method: {
       type: String,
-      enum: ["GET", "POST", "PUT", "DELETE"],
+      enum: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     },
     endpoint: {
       type: String,

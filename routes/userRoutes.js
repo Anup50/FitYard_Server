@@ -15,39 +15,66 @@ import {
   getAdminSecurityStatus,
 } from "../controllers/userController.js";
 import { loginRateLimiter } from "../middleware/loginRateLimiter.js";
+import {
+  loginRateLimit,
+  registrationRateLimit,
+  passwordResetRateLimit,
+  generalRateLimit,
+} from "../middleware/rateLimitLogger.js";
 import { csrfProtection } from "../middleware/csrfProtection.js";
 import adminAuth from "../middleware/adminAuth.js";
 import authUser from "../middleware/auth.js";
 
 const userRouter = express.Router();
 
-userRouter.post("/register", csrfProtection, registerUser);
-userRouter.post("/verify-otp", csrfProtection, verifyUserOtp);
+userRouter.post(
+  "/register",
+  registrationRateLimit,
+  csrfProtection,
+  registerUser
+);
+userRouter.post("/verify-otp", loginRateLimit, csrfProtection, verifyUserOtp);
 userRouter.post(
   "/resend-registration-otp",
-  loginRateLimiter,
+  passwordResetRateLimit,
   csrfProtection,
   resendRegistrationOtp
 );
-userRouter.post("/login", loginRateLimiter, csrfProtection, loginUser);
+userRouter.post("/login", loginRateLimit, csrfProtection, loginUser);
 userRouter.post(
   "/verify-login-otp",
-  loginRateLimiter,
+  loginRateLimit,
   csrfProtection,
   verifyLoginOtp
 );
 userRouter.post(
   "/resend-login-otp",
-  loginRateLimiter,
+  passwordResetRateLimit,
   csrfProtection,
   resendLoginOtp
 );
-userRouter.get("/profile", authUser, getUserProfile);
-userRouter.put("/profile", authUser, csrfProtection, updateUserProfile);
-userRouter.post("/logout", csrfProtection, logoutUser);
-userRouter.post("/admin", csrfProtection, adminLogin);
-userRouter.post("/admin/logout", csrfProtection, logoutAdmin);
-userRouter.get("/admin/security-status", adminAuth, getAdminSecurityStatus);
-userRouter.post("/admin/register", csrfProtection, registerAdmin); // No middleware - controller handles auth logic
+userRouter.get("/profile", authUser, generalRateLimit, getUserProfile);
+userRouter.put(
+  "/profile",
+  authUser,
+  generalRateLimit,
+  csrfProtection,
+  updateUserProfile
+);
+userRouter.post("/logout", generalRateLimit, csrfProtection, logoutUser);
+userRouter.post("/admin", loginRateLimit, csrfProtection, adminLogin);
+userRouter.post("/admin/logout", generalRateLimit, csrfProtection, logoutAdmin);
+userRouter.get(
+  "/admin/security-status",
+  adminAuth,
+  generalRateLimit,
+  getAdminSecurityStatus
+);
+userRouter.post(
+  "/admin/register",
+  registrationRateLimit,
+  csrfProtection,
+  registerAdmin
+); // No middleware - controller handles auth logic
 
 export default userRouter;

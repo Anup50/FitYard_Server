@@ -193,7 +193,12 @@ const exportAuditLogs = async (req, res) => {
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
-      if (endDate) query.createdAt.$lte = new Date(endDate);
+      if (endDate) {
+        // Add 23:59:59.999 to include the entire end date
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = endDateTime;
+      }
     }
     if (userType) query.userType = userType;
     if (action) query.action = action;
