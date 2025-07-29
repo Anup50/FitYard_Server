@@ -2,6 +2,7 @@ import validator from "validator";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import axios from "axios";
+import crypto from "crypto";
 
 import userModel from "../models/userModel.js";
 import adminModel from "../models/adminModel.js";
@@ -11,6 +12,12 @@ import sendOtpEmail from "../utils/sendOtpEmail.js";
 import { logActivity, logError } from "../utils/logger.js";
 import { createAuditLog, logUserAction } from "../middleware/auditLogger.js";
 import adminSessionTracker from "../utils/adminSessionTracker.js";
+import {
+  generateResetToken,
+  generateResetOTP,
+  sendPasswordResetEmail,
+  validatePasswordStrength,
+} from "../utils/passwordReset.js";
 
 const createToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "1d" });
@@ -138,6 +145,38 @@ export const verifyLoginOtp = async (req, res) => {
 
     // OTP is valid, complete the login
     const user = await userModel.findById(tempLogin.userId).select("-password");
+
+    // Check if password is expired or must be changed
+    if (user.isPasswordExpired || user.mustChangePassword) {
+      // Clean up temp login record
+      await tempLoginModel.deleteOne({ email });
+
+      // Log password expiry detected
+      await createAuditLog({
+        userId: user._id,
+        userType: "User",
+        userEmail: email,
+        action: "LOGIN_PASSWORD_EXPIRED",
+        description: `Login blocked - password expired for user: ${email}`,
+        method: req.method,
+        endpoint: req.path,
+        ipAddress: req.ip,
+        status: "FAILURE",
+        metadata: {
+          reason: user.mustChangePassword ? "FORCED_CHANGE" : "EXPIRED",
+          passwordExpiresAt: user.passwordExpiresAt,
+        },
+      });
+
+      return res.json({
+        success: false,
+        message:
+          "Your password has expired. Please reset your password to continue.",
+        passwordExpired: true,
+        mustChangePassword: user.mustChangePassword,
+      });
+    }
+
     const token = createToken(user._id);
 
     res.cookie("token", token, {
@@ -159,7 +198,23 @@ export const verifyLoginOtp = async (req, res) => {
       req.get("User-Agent")
     );
 
-    res.json({ success: true, user, message: "Login successful!" });
+    // Check if password expires soon (within 7 days)
+    const daysUntilExpiry = Math.ceil(
+      (user.passwordExpiresAt - new Date()) / (1000 * 60 * 60 * 24)
+    );
+    const passwordWarning = daysUntilExpiry <= 7 && daysUntilExpiry > 0;
+
+    res.json({
+      success: true,
+      user,
+      message: "Login successful!",
+      passwordWarning: passwordWarning
+        ? {
+            daysUntilExpiry,
+            message: `Your password will expire in ${daysUntilExpiry} day(s). Please change it soon.`,
+          }
+        : null,
+    });
   } catch (e) {
     console.log(e);
     logError("LOGIN_OTP_VERIFICATION_ERROR", e.message, {
@@ -869,6 +924,395 @@ export const getAdminSecurityStatus = async (req, res) => {
     res.json({
       success: false,
       message: "Failed to get security status",
+    });
+  }
+};
+
+// Check password expiry middleware
+export const checkPasswordExpiry = async (req, res, next) => {
+  try {
+    if (req.user && req.user.isPasswordExpired) {
+      return res.status(403).json({
+        success: false,
+        message: "Password has expired. Please change your password.",
+        passwordExpired: true,
+      });
+    }
+    next();
+  } catch (error) {
+    next();
+  }
+};
+
+// Update password
+export const updatePassword = async (req, res) => {
+  try {
+    const { userId, currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password and new password are required",
+      });
+    }
+
+    const user = await userModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.password
+    );
+    if (!isCurrentPasswordValid) {
+      // Log failed password change attempt
+      await createAuditLog({
+        userId: user._id,
+        userType: "User",
+        userEmail: user.email,
+        action: "PASSWORD_CHANGE_FAILED",
+        description:
+          "Failed password change attempt - invalid current password",
+        method: req.method,
+        endpoint: req.path,
+        ipAddress: req.ip,
+        status: "FAILURE",
+        metadata: { reason: "INVALID_CURRENT_PASSWORD" },
+      });
+
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect",
+      });
+    }
+
+    // Check if new password is the same as current password
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password cannot be the same as current password",
+      });
+    }
+
+    // Validate new password strength
+    const passwordValidation = validatePasswordStrength(newPassword);
+    if (!passwordValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: passwordValidation.message,
+      });
+    }
+
+    // Check if new password was used recently
+    if (user.wasPasswordUsedRecently(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot reuse any of your last 5 passwords",
+      });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedNewPassword = await bcrypt.hash(newPassword, salt);
+
+    // Add current password to history and update
+    user.addPasswordToHistory(user.password);
+    user.password = hashedNewPassword;
+    await user.save();
+
+    // Log successful password change
+    await createAuditLog({
+      userId: user._id,
+      userType: "User",
+      userEmail: user.email,
+      action: "PASSWORD_CHANGED",
+      description: "User successfully changed password",
+      method: req.method,
+      endpoint: req.path,
+      ipAddress: req.ip,
+      status: "SUCCESS",
+    });
+
+    res.json({
+      success: true,
+      message: "Password updated successfully",
+    });
+  } catch (error) {
+    console.error("Password update error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update password",
+    });
+  }
+};
+
+// Forgot password - send reset link
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+
+    const user = await userModel.findOne({ email });
+    if (!user) {
+      // Don't reveal that user doesn't exist for security
+      return res.json({
+        success: true,
+        message:
+          "If an account with that email exists, a password reset link has been sent.",
+      });
+    }
+
+    // Generate reset token
+    const resetToken = generateResetToken();
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
+
+    // Set reset token and expiry
+    user.passwordResetToken = tokenHash;
+    user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    await user.save();
+
+    // Send reset email
+    try {
+      const resetUrl = `${process.env.FRONTEND_URL}/reset-password`;
+      await sendPasswordResetEmail(email, resetToken, resetUrl);
+
+      // Log password reset request
+      await createAuditLog({
+        userId: user._id,
+        userType: "User",
+        userEmail: user.email,
+        action: "PASSWORD_RESET_REQUESTED",
+        description: "User requested password reset",
+        method: req.method,
+        endpoint: req.path,
+        ipAddress: req.ip,
+        status: "SUCCESS",
+      });
+
+      res.json({
+        success: true,
+        message: "Password reset link sent to your email",
+      });
+    } catch (emailError) {
+      // Clear reset token if email fails
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      await user.save();
+
+      console.error("Password reset email error:", emailError);
+      res.status(500).json({
+        success: false,
+        message: "Failed to send reset email. Please try again.",
+      });
+    }
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to process password reset request",
+    });
+  }
+};
+
+// Reset password with token
+export const resetPassword = async (req, res) => {
+  try {
+    const { email, token, newPassword } = req.body;
+
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Email, token, and new password are required",
+      });
+    }
+
+    // Hash the provided token to compare with stored hash
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+    // Find user with valid reset token
+    const user = await userModel.findOne({
+      email,
+      passwordResetToken: tokenHash,
+      passwordResetExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      // Log failed reset attempt
+      await createAuditLog({
+        userId: null,
+        userType: "User",
+        userEmail: email,
+        action: "PASSWORD_RESET_FAILED",
+        description: "Failed password reset attempt - invalid or expired token",
+        method: req.method,
+        endpoint: req.path,
+        ipAddress: req.ip,
+        status: "FAILURE",
+        metadata: { reason: "INVALID_TOKEN" },
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired reset token",
+      });
+    }
+
+    // Validate new password strength
+    const passwordValidation = validatePasswordStrength(newPassword);
+    if (!passwordValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: passwordValidation.message,
+      });
+    }
+
+    // Check if new password is the same as current password
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password cannot be the same as current password",
+      });
+    }
+
+    // Check if new password was used recently
+    if (user.wasPasswordUsedRecently(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot reuse any of your last 5 passwords",
+      });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedNewPassword = await bcrypt.hash(newPassword, salt);
+
+    // Add current password to history and update
+    user.addPasswordToHistory(user.password);
+    user.password = hashedNewPassword;
+
+    // Clear reset token
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+
+    await user.save();
+
+    // Log successful password reset
+    await createAuditLog({
+      userId: user._id,
+      userType: "User",
+      userEmail: user.email,
+      action: "PASSWORD_RESET_COMPLETED",
+      description: "User successfully reset password",
+      method: req.method,
+      endpoint: req.path,
+      ipAddress: req.ip,
+      status: "SUCCESS",
+    });
+
+    res.json({
+      success: true,
+      message: "Password reset successfully",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to reset password",
+    });
+  }
+};
+
+// Get password status (expiry info)
+export const getPasswordStatus = async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    const user = await userModel
+      .findById(userId)
+      .select("passwordExpiresAt passwordChangedAt mustChangePassword");
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
+    }
+
+    const now = new Date();
+    const daysUntilExpiry = Math.ceil(
+      (user.passwordExpiresAt - now) / (1000 * 60 * 60 * 24)
+    );
+
+    res.json({
+      success: true,
+      data: {
+        passwordExpiresAt: user.passwordExpiresAt,
+        passwordChangedAt: user.passwordChangedAt,
+        isExpired: user.isPasswordExpired,
+        daysUntilExpiry: daysUntilExpiry > 0 ? daysUntilExpiry : 0,
+        mustChangePassword: user.mustChangePassword,
+        needsWarning: daysUntilExpiry <= 7 && daysUntilExpiry > 0,
+      },
+    });
+  } catch (error) {
+    console.error("Get password status error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get password status",
+    });
+  }
+};
+
+// Force password change (admin function)
+export const forcePasswordChange = async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!req.admin) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized. Admin access required.",
+      });
+    }
+
+    const user = await userModel.findById(userId);
+    if (!user) {
+      return res.json({ success: false, message: "User not found" });
+    }
+
+    user.mustChangePassword = true;
+    user.passwordExpiresAt = new Date(); // Expire immediately
+    await user.save();
+
+    // Log forced password change
+    await createAuditLog({
+      userId: req.admin._id,
+      userType: "Admin",
+      userEmail: req.admin.email,
+      action: "ADMIN_FORCE_PASSWORD_CHANGE",
+      description: `Admin forced password change for user: ${user.email}`,
+      method: req.method,
+      endpoint: req.path,
+      ipAddress: req.ip,
+      status: "SUCCESS",
+      metadata: { targetUserId: userId, targetUserEmail: user.email },
+    });
+
+    res.json({
+      success: true,
+      message: "User will be required to change password on next login",
+    });
+  } catch (error) {
+    console.error("Force password change error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to force password change",
     });
   }
 };

@@ -44,7 +44,6 @@ const auditLogSchema = new mongoose.Schema(
         "FILE_UPLOAD",
         "API_REQUEST",
         "ERROR",
-        // Rate limiting violations
         "RATE_LIMIT_VIOLATION",
         "LOGIN_RATE_LIMIT_VIOLATION",
         "GENERAL_RATE_LIMIT_VIOLATION",
@@ -52,6 +51,14 @@ const auditLogSchema = new mongoose.Schema(
         "AUDIT_RATE_LIMIT_VIOLATION",
         "REGISTRATION_RATE_LIMIT_VIOLATION",
         "PASSWORD_RESET_RATE_LIMIT_VIOLATION",
+        // Password management actions
+        "PASSWORD_CHANGED",
+        "PASSWORD_CHANGE_FAILED",
+        "PASSWORD_RESET_REQUESTED",
+        "PASSWORD_RESET_COMPLETED",
+        "PASSWORD_RESET_FAILED",
+        "LOGIN_PASSWORD_EXPIRED",
+        "ADMIN_FORCE_PASSWORD_CHANGE",
       ],
     },
 

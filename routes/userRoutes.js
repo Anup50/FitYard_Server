@@ -13,6 +13,12 @@ import {
   logoutUser,
   logoutAdmin,
   getAdminSecurityStatus,
+  updatePassword,
+  forgotPassword,
+  resetPassword,
+  getPasswordStatus,
+  forcePasswordChange,
+  checkPasswordExpiry,
 } from "../controllers/userController.js";
 import { loginRateLimiter } from "../middleware/loginRateLimiter.js";
 import {
@@ -75,6 +81,32 @@ userRouter.post(
   registrationRateLimit,
   csrfProtection,
   registerAdmin
-); // No middleware - controller handles auth logic
+);
+
+// Password management routes
+userRouter.post(
+  "/update-password",
+  authUser,
+  generalRateLimit,
+  csrfProtection,
+  updatePassword
+);
+userRouter.post("/forgot-password", passwordResetRateLimit, forgotPassword);
+userRouter.post("/reset-password", passwordResetRateLimit, resetPassword);
+userRouter.get(
+  "/password-status",
+  authUser,
+  generalRateLimit,
+  getPasswordStatus
+);
+
+// Admin only - force password change
+userRouter.post(
+  "/admin/force-password-change",
+  adminAuth,
+  generalRateLimit,
+  csrfProtection,
+  forcePasswordChange
+);
 
 export default userRouter;
