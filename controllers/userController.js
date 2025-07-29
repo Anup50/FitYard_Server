@@ -9,6 +9,8 @@ import tempUserModel from "../models/tempUserModel.js";
 import tempLoginModel from "../models/tempLoginModel.js";
 import sendOtpEmail from "../utils/sendOtpEmail.js";
 import { logActivity, logError } from "../utils/logger.js";
+import { createAuditLog, logUserAction } from "../middleware/auditLogger.js";
+import adminSessionTracker from "../utils/adminSessionTracker.js";
 
 const createToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "1d" });
@@ -341,6 +343,14 @@ export const adminLogin = async (req, res) => {
     const isMatch = await bcrypt.compare(password, admin.password);
 
     if (isMatch) {
+      // Track successful admin login
+      adminSessionTracker.trackLogin(
+        admin._id.toString(),
+        req.ip,
+        req.get("User-Agent"),
+        true
+      );
+
       // Update last login
       admin.lastLogin = new Date();
       await admin.save();
@@ -376,6 +386,14 @@ export const adminLogin = async (req, res) => {
         req.get("User-Agent")
       );
     } else {
+      // Track failed admin login attempt
+      adminSessionTracker.trackLogin(
+        admin._id.toString(),
+        req.ip,
+        req.get("User-Agent"),
+        false
+      );
+
       // Log failed admin login attempt
       logActivity(
         null,
@@ -721,5 +739,136 @@ export const resendLoginOtp = async (req, res) => {
       ip: req.ip,
     });
     res.json({ success: false, message: e.message });
+  }
+};
+
+// Route for user logout
+export const logoutUser = async (req, res) => {
+  try {
+    const userId = req.body.userId;
+
+    // Clear the JWT cookie
+    res.clearCookie("token", {
+      httpOnly: true,
+      secure: true, // Use secure in production
+      sameSite: "strict",
+      path: "/",
+    });
+
+    // Clear CSRF cookie as well for security
+    res.clearCookie("_csrf", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      path: "/",
+    });
+
+    // Clean up any temporary login sessions
+    if (userId) {
+      await tempLoginModel.deleteMany({ userId });
+    }
+
+    // Log the logout activity
+    logActivity("USER_LOGOUT", "User logged out successfully", {
+      userId: userId || "unknown",
+      ip: req.ip,
+      userAgent: req.get("User-Agent"),
+      timestamp: new Date(),
+    });
+
+    res.json({
+      success: true,
+      message: "Logged out successfully",
+    });
+  } catch (error) {
+    logError("LOGOUT_ERROR", error.message, {
+      userId: req.body.userId,
+      ip: req.ip,
+    });
+    res.json({
+      success: false,
+      message: "Logout failed. Please try again.",
+    });
+  }
+};
+
+// Route for admin logout
+export const logoutAdmin = async (req, res) => {
+  try {
+    const adminId = req.body.adminId;
+
+    // Clear the JWT cookie
+    res.clearCookie("token", {
+      httpOnly: true,
+      secure: true, // Use secure in production
+      sameSite: "strict",
+      path: "/",
+    });
+
+    // Clear CSRF cookie as well for security
+    res.clearCookie("_csrf", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      path: "/",
+    });
+
+    // Log the admin logout activity
+    logActivity("ADMIN_LOGOUT", "Admin logged out successfully", {
+      adminId: adminId || "unknown",
+      ip: req.ip,
+      userAgent: req.get("User-Agent"),
+      timestamp: new Date(),
+    });
+
+    res.json({
+      success: true,
+      message: "Admin logged out successfully",
+    });
+  } catch (error) {
+    logError("ADMIN_LOGOUT_ERROR", error.message, {
+      adminId: req.body.adminId,
+      ip: req.ip,
+    });
+    res.json({
+      success: false,
+      message: "Admin logout failed. Please try again.",
+    });
+  }
+};
+
+// Get admin session summary and security status
+export const getAdminSecurityStatus = async (req, res) => {
+  try {
+    const adminId = req.admin.id; // From auth middleware
+
+    // Get session summary from tracker
+    const sessionSummary = adminSessionTracker.getAdminSessionSummary(adminId);
+
+    if (!sessionSummary) {
+      return res.json({
+        success: true,
+        data: {
+          adminId,
+          activeSessions: 0,
+          riskLevel: "LOW",
+          message: "No active sessions found",
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      data: sessionSummary,
+    });
+  } catch (error) {
+    logError("ADMIN_SECURITY_STATUS_ERROR", error.message, {
+      adminId: req.admin?.id,
+      ip: req.ip,
+    });
+    res.json({
+      success: false,
+      message: "Failed to get security status",
+    });
   }
 };

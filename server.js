@@ -5,10 +5,13 @@ import cors from "cors";
 import "dotenv/config";
 import connectDB from "./config/mongodb.js";
 import connectCloudinary from "./config/cloudinary.js";
+import { getCsrfToken, csrfProtection } from "./middleware/csrfProtection.js";
+import { auditMiddleware } from "./middleware/auditLogger.js";
 import userRouter from "./routes/userRoutes.js";
 import productRouter from "./routes/productRoute.js";
 import cartRouter from "./routes/cartRoute.js";
 import orderRouter from "./routes/orderRoute.js";
+import auditRouter from "./routes/auditRoute.js";
 import https from "https";
 import fs from "fs";
 
@@ -42,6 +45,10 @@ app.use(
 //Middlewares
 app.use(express.json());
 app.use(cookieParser());
+
+// Audit logging middleware - logs all requests for security monitoring
+app.use(auditMiddleware());
+
 app.use(
   cors({
     origin: [
@@ -54,15 +61,23 @@ app.use(
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "token"],
+    allowedHeaders: ["Content-Type", "Authorization", "token", "x-csrf-token"],
     optionsSuccessStatus: 200,
   })
 );
+
+// CSRF Protection - Apply to state-changing routes only
+// Note: CSRF protection will be applied selectively to routes that need it
+
+// CSRF token endpoint
+app.get("/api/csrf-token", getCsrfToken);
+
 //API endpoints
 app.use("/api/user", userRouter);
 app.use("/api/product", productRouter);
 app.use("/api/cart", cartRouter);
 app.use("/api/order", orderRouter);
+app.use("/api/audit", auditRouter); // Admin-only audit log management
 
 app.get("/", (req, res) => {
   res.send("API WORKING");

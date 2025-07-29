@@ -10,22 +10,23 @@ import {
 } from "../controllers/orderController.js";
 import adminAuth from "../middleware/adminAuth.js";
 import authUser from "../middleware/auth.js";
+import { csrfProtection } from "../middleware/csrfProtection.js";
 
 const orderRouter = express.Router();
 
 //ADMIN FEATURE
 orderRouter.get("/list", adminAuth, allOrders);
-orderRouter.put("/status", adminAuth, updateStatus);
+orderRouter.put("/status", adminAuth, csrfProtection, updateStatus);
 
 //PAYMENT FEATURE
-orderRouter.post("/place", authUser, placeOrder);
-orderRouter.post("/stripe", authUser, placeOrderStripe);
-orderRouter.post("/razorpay", authUser, placeOrderRazorpay);
+orderRouter.post("/place", authUser, csrfProtection, placeOrder);
+orderRouter.post("/stripe", authUser, csrfProtection, placeOrderStripe);
+orderRouter.post("/razorpay", authUser, csrfProtection, placeOrderRazorpay);
 
 //USER FEATURE
 orderRouter.get("/userorders", authUser, userOrders);
 
 //VERIFY PAYMENT
-orderRouter.post("/verifystripe", authUser, verifyStripe);
+orderRouter.post("/verifystripe", authUser, csrfProtection, verifyStripe);
 
 export default orderRouter;

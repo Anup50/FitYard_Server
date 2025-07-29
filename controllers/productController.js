@@ -1,5 +1,6 @@
 import { v2 as cloudinary } from "cloudinary";
 import productModel from "../models/productModel.js";
+import adminSessionTracker from "../utils/adminSessionTracker.js";
 
 // function for add product
 export const addProduct = async (req, res) => {
@@ -50,6 +51,16 @@ export const addProduct = async (req, res) => {
 
     await product.save();
 
+    // Track admin action for adding product
+    if (req.admin && req.admin.id) {
+      adminSessionTracker.trackAction(req.admin.id, "ADD_PRODUCT", req.ip, {
+        productName: name,
+        productId: product._id,
+        category,
+        price,
+      });
+    }
+
     res.json({ success: true, message: "Product Added" });
   } catch (e) {
     console.log(e);
@@ -71,7 +82,18 @@ export const listProduct = async (req, res) => {
 // function for remove product
 export const removeProduct = async (req, res) => {
   try {
+    const productToDelete = await productModel.findById(req.body.id);
+
     await productModel.findByIdAndDelete(req.body.id);
+
+    // Track admin action for removing product
+    if (req.admin && req.admin.id) {
+      adminSessionTracker.trackAction(req.admin.id, "DELETE_PRODUCT", req.ip, {
+        productId: req.body.id,
+        productName: productToDelete?.name || "Unknown",
+      });
+    }
+
     res.json({ success: true, message: "Product Removed" });
   } catch (e) {
     console.log(e);

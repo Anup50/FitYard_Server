@@ -1,6 +1,7 @@
 import orderModel from "../models/orderModel.js";
 import userModel from "../models/userModel.js";
 import Stripe from "stripe";
+import adminSessionTracker from "../utils/adminSessionTracker.js";
 
 //GLOBAL VARIABLES
 const currency = "usd";
@@ -147,8 +148,27 @@ export const updateStatus = async (req, res) => {
     // Only admins should reach here (checked by adminAuth middleware)
     const { orderId, status } = req.body;
 
+    // Get the order before updating to track the change
+    const existingOrder = await orderModel.findById(orderId);
+    const oldStatus = existingOrder?.status || "Unknown";
+
     // Update order status
     await orderModel.findByIdAndUpdate(orderId, { status });
+
+    // Track admin action for order status update
+    if (req.admin && req.admin.id) {
+      adminSessionTracker.trackAction(
+        req.admin.id,
+        "UPDATE_ORDER_STATUS",
+        req.ip,
+        {
+          orderId,
+          oldStatus,
+          newStatus: status,
+          orderAmount: existingOrder?.amount || 0,
+        }
+      );
+    }
 
     res.json({ success: true, message: "Status updated" });
   } catch (error) {
