@@ -303,4 +303,107 @@ const getFilterOptions = async (req, res) => {
   }
 };
 
-export { getAuditLogs, getAuditStats, exportAuditLogs, getFilterOptions };
+// Get security events (NoSQL injection attempts, etc.)
+const getSecurityEvents = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, hours = 24 } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const hoursNum = Math.min(168, Math.max(1, parseInt(hours))); // Max 7 days
+
+    // Calculate time range
+    const timeRange = new Date(Date.now() - hoursNum * 60 * 60 * 1000);
+
+    // Get security events
+    const securityEvents = await auditLogModel
+      .find({
+        action: { $regex: /^SECURITY_/ },
+        createdAt: { $gte: timeRange },
+      })
+      .sort({ createdAt: -1 })
+      .limit(limitNum)
+      .skip((pageNum - 1) * limitNum)
+      .lean();
+
+    // Get summary statistics
+    const totalEvents = await auditLogModel.countDocuments({
+      action: { $regex: /^SECURITY_/ },
+      createdAt: { $gte: timeRange },
+    });
+
+    // Group by event type
+    const eventTypes = await auditLogModel.aggregate([
+      {
+        $match: {
+          action: { $regex: /^SECURITY_/ },
+          createdAt: { $gte: timeRange },
+        },
+      },
+      {
+        $group: {
+          _id: "$action",
+          count: { $sum: 1 },
+          latestEvent: { $max: "$createdAt" },
+        },
+      },
+      { $sort: { count: -1 } },
+    ]);
+
+    // Get top IPs with security events
+    const topIPs = await auditLogModel.aggregate([
+      {
+        $match: {
+          action: { $regex: /^SECURITY_/ },
+          createdAt: { $gte: timeRange },
+        },
+      },
+      {
+        $group: {
+          _id: "$ipAddress",
+          count: { $sum: 1 },
+          events: { $push: "$action" },
+        },
+      },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+    ]);
+
+    res.json({
+      success: true,
+      message: "Security events retrieved successfully",
+      data: {
+        events: securityEvents,
+        pagination: {
+          currentPage: pageNum,
+          totalPages: Math.ceil(totalEvents / limitNum),
+          totalEvents,
+          hasNextPage: pageNum * limitNum < totalEvents,
+          hasPrevPage: pageNum > 1,
+        },
+        summary: {
+          timeRange: hoursNum,
+          totalEvents,
+          eventTypes,
+          topIPs,
+          riskLevel:
+            totalEvents > 50 ? "HIGH" : totalEvents > 10 ? "MEDIUM" : "LOW",
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get security events error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to retrieve security events",
+    });
+  }
+};
+
+export {
+  getAuditLogs,
+  getAuditStats,
+  exportAuditLogs,
+  getFilterOptions,
+  getSecurityEvents,
+};

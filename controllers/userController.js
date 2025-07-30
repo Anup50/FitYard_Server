@@ -13,6 +13,10 @@ import { logActivity, logError } from "../utils/logger.js";
 import { createAuditLog, logUserAction } from "../middleware/auditLogger.js";
 import adminSessionTracker from "../utils/adminSessionTracker.js";
 import {
+  validateAndSanitizeInput,
+  logSecurityEvent,
+} from "../middleware/security.js";
+import {
   generateResetToken,
   generateResetOTP,
   sendPasswordResetEmail,
@@ -22,30 +26,53 @@ import {
 const createToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "1d" });
 };
+
 //Route for user login
 export const loginUser = async (req, res) => {
   try {
     const { email, password, captcha } = req.body;
 
+    // Validate and sanitize inputs
+    let sanitizedEmail, sanitizedPassword;
+
+    try {
+      sanitizedEmail = validateAndSanitizeInput(email, "email");
+      sanitizedPassword = validateAndSanitizeInput(password, "password");
+    } catch (validationError) {
+      await logSecurityEvent(
+        req,
+        "INVALID_LOGIN_INPUT",
+        validationError.message
+      );
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
+    }
+
     // Verify reCAPTCHA
     if (!captcha) {
-      return res.json({ success: false, message: "Captcha is required." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Captcha is required." });
     }
     const verifyUrl = `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captcha}`;
     const captchaRes = await axios.post(verifyUrl);
     if (!captchaRes.data.success) {
-      return res.json({
+      return res.status(400).json({
         success: false,
         message: "Captcha verification failed.",
       });
     }
 
-    const user = await userModel.findOne({ email });
+    const user = await userModel.findOne({ email: sanitizedEmail });
     if (!user) {
-      return res.json({ success: false, message: "User does not exists" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await bcrypt.compare(sanitizedPassword, user.password);
 
     if (isMatch) {
       // Generate OTP for login verification
@@ -230,28 +257,51 @@ export const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Check if user already exists in main or temp collection
-    const exists = await userModel.findOne({ email });
-    if (exists) {
-      return res.json({ success: false, message: "User already exists" });
+    // Validate and sanitize inputs
+    let sanitizedName, sanitizedEmail, sanitizedPassword;
+
+    try {
+      sanitizedName = validateAndSanitizeInput(name, "name");
+      sanitizedEmail = validateAndSanitizeInput(email, "email");
+      sanitizedPassword = validateAndSanitizeInput(password, "password");
+    } catch (validationError) {
+      await logSecurityEvent(
+        req,
+        "INVALID_REGISTRATION_INPUT",
+        validationError.message
+      );
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
     }
-    const tempExists = await tempUserModel.findOne({ email });
+
+    // Check if user already exists in main or temp collection
+    const exists = await userModel.findOne({ email: sanitizedEmail });
+    if (exists) {
+      return res
+        .status(409)
+        .json({ success: false, message: "User already exists" });
+    }
+    const tempExists = await tempUserModel.findOne({ email: sanitizedEmail });
     if (tempExists) {
-      return res.json({
+      return res.status(409).json({
         success: false,
         message: "Please verify OTP sent to your email",
       });
     }
 
-    // Validate email and password
-    if (!validator.isEmail(email)) {
-      return res.json({
+    // Validate email format (additional check)
+    if (!validator.isEmail(sanitizedEmail)) {
+      return res.status(400).json({
         success: false,
         message: "Please enter a valid email",
       });
     }
+
+    // Validate password strength
     if (
-      !validator.isStrongPassword(password, {
+      !validator.isStrongPassword(sanitizedPassword, {
         minLength: 8,
         minLowercase: 1,
         minUppercase: 1,
@@ -259,7 +309,7 @@ export const registerUser = async (req, res) => {
         minSymbols: 1,
       })
     ) {
-      return res.json({
+      return res.status(400).json({
         success: false,
         message:
           "Password must be at least 8 characters long and include uppercase, lowercase, number, and symbol.",
@@ -268,7 +318,7 @@ export const registerUser = async (req, res) => {
 
     // Hash password
     const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const hashedPassword = await bcrypt.hash(sanitizedPassword, salt);
 
     // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -276,8 +326,8 @@ export const registerUser = async (req, res) => {
 
     // Store in tempUser collection
     await tempUserModel.create({
-      name,
-      email,
+      name: sanitizedName,
+      email: sanitizedEmail,
       password: hashedPassword,
       otp,
       otpExpires,
@@ -285,7 +335,7 @@ export const registerUser = async (req, res) => {
 
     // Send OTP via email
     try {
-      await sendOtpEmail(email, otp);
+      await sendOtpEmail(sanitizedEmail, otp);
     } catch (err) {
       // Clean up temp user if email fails
       await tempUserModel.deleteOne({ email });
@@ -380,22 +430,42 @@ export const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    // Validate and sanitize inputs
+    let sanitizedEmail, sanitizedPassword;
+
+    try {
+      sanitizedEmail = validateAndSanitizeInput(email, "email");
+      sanitizedPassword = validateAndSanitizeInput(password, "password");
+    } catch (validationError) {
+      await logSecurityEvent(
+        req,
+        "INVALID_ADMIN_LOGIN_INPUT",
+        validationError.message
+      );
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
+    }
+
     // Find admin in database
-    const admin = await adminModel.findOne({ email });
+    const admin = await adminModel.findOne({ email: sanitizedEmail });
     if (!admin) {
-      return res.json({ success: false, message: "Admin not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Admin not found" });
     }
 
     // Check if admin is active
     if (!admin.isActive) {
-      return res.json({
+      return res.status(403).json({
         success: false,
         message: "Admin account is deactivated",
       });
     }
 
     // Compare password with hashed password
-    const isMatch = await bcrypt.compare(password, admin.password);
+    const isMatch = await bcrypt.compare(sanitizedPassword, admin.password);
 
     if (isMatch) {
       // Track successful admin login
@@ -949,21 +1019,38 @@ export const updatePassword = async (req, res) => {
   try {
     const { userId, currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
+    // Validate and sanitize inputs
+    let sanitizedUserId, sanitizedCurrentPassword, sanitizedNewPassword;
+
+    try {
+      sanitizedUserId = validateAndSanitizeInput(userId, "id");
+      sanitizedCurrentPassword = validateAndSanitizeInput(
+        currentPassword,
+        "password"
+      );
+      sanitizedNewPassword = validateAndSanitizeInput(newPassword, "password");
+    } catch (validationError) {
+      await logSecurityEvent(
+        req,
+        "INVALID_PASSWORD_UPDATE_INPUT",
+        validationError.message
+      );
       return res.status(400).json({
         success: false,
-        message: "Current password and new password are required",
+        message: validationError.message,
       });
     }
 
-    const user = await userModel.findById(userId);
+    const user = await userModel.findById(sanitizedUserId);
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     // Verify current password
     const isCurrentPasswordValid = await bcrypt.compare(
-      currentPassword,
+      sanitizedCurrentPassword,
       user.password
     );
     if (!isCurrentPasswordValid) {
@@ -989,7 +1076,10 @@ export const updatePassword = async (req, res) => {
     }
 
     // Check if new password is the same as current password
-    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    const isSamePassword = await bcrypt.compare(
+      sanitizedNewPassword,
+      user.password
+    );
     if (isSamePassword) {
       return res.status(400).json({
         success: false,
@@ -998,7 +1088,7 @@ export const updatePassword = async (req, res) => {
     }
 
     // Validate new password strength
-    const passwordValidation = validatePasswordStrength(newPassword);
+    const passwordValidation = validatePasswordStrength(sanitizedNewPassword);
     if (!passwordValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -1007,7 +1097,7 @@ export const updatePassword = async (req, res) => {
     }
 
     // Check if new password was used recently
-    if (user.wasPasswordUsedRecently(newPassword)) {
+    if (user.wasPasswordUsedRecently(sanitizedNewPassword)) {
       return res.status(400).json({
         success: false,
         message: "Cannot reuse any of your last 5 passwords",
@@ -1016,7 +1106,7 @@ export const updatePassword = async (req, res) => {
 
     // Hash new password
     const salt = await bcrypt.genSalt(10);
-    const hashedNewPassword = await bcrypt.hash(newPassword, salt);
+    const hashedNewPassword = await bcrypt.hash(sanitizedNewPassword, salt);
 
     // Add current password to history and update
     user.addPasswordToHistory(user.password);
@@ -1055,7 +1145,9 @@ export const forgotPassword = async (req, res) => {
     const { email } = req.body;
 
     if (!email) {
-      return res.status(400).json({ success: false, message: "Email is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Email is required" });
     }
 
     const user = await userModel.findOne({ email });

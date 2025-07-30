@@ -7,6 +7,7 @@ import connectDB from "./config/mongodb.js";
 import connectCloudinary from "./config/cloudinary.js";
 import { getCsrfToken, csrfProtection } from "./middleware/csrfProtection.js";
 import { auditMiddleware } from "./middleware/auditLogger.js";
+import { mongoSanitizer, securityHeaders } from "./middleware/security.js";
 import userRouter from "./routes/userRoutes.js";
 import productRouter from "./routes/productRoute.js";
 import cartRouter from "./routes/cartRoute.js";
@@ -21,32 +22,18 @@ const port = process.env.PORT || 4000;
 connectDB();
 connectCloudinary();
 
-//Security Middlewares
-app.use(
-  helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-        fontSrc: ["'self'", "https://fonts.gstatic.com"],
-        imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
-        scriptSrc: ["'self'"],
-        connectSrc: [
-          "'self'",
-          "https://localhost:4000",
-          "https://localhost:3000",
-        ],
-      },
-    },
-    crossOriginEmbedderPolicy: false, // Needed for some frontend frameworks
-  })
-);
+//Security Middlewares (Order matters!)
+// 1. Security headers first
+app.use(securityHeaders);
 
-//Middlewares
-app.use(express.json());
+// 2. NoSQL injection prevention
+app.use(mongoSanitizer);
+
+// 3. JSON parsing with limits
+app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 
-// Audit logging middleware - logs all requests for security monitoring
+// 4. Audit logging middleware - logs all requests for security monitoring
 app.use(auditMiddleware());
 
 app.use(

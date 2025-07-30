@@ -1,6 +1,10 @@
 import { v2 as cloudinary } from "cloudinary";
 import productModel from "../models/productModel.js";
 import adminSessionTracker from "../utils/adminSessionTracker.js";
+import {
+  validateAndSanitizeInput,
+  logSecurityEvent,
+} from "../middleware/security.js";
 
 // function for add product
 export const addProduct = async (req, res) => {
@@ -14,6 +18,38 @@ export const addProduct = async (req, res) => {
       sizes,
       bestSeller,
     } = req.body;
+
+    // Validate and sanitize inputs
+    let sanitizedName,
+      sanitizedDescription,
+      sanitizedCategory,
+      sanitizedSubCategory;
+
+    try {
+      sanitizedName = validateAndSanitizeInput(name, "name");
+      sanitizedDescription = validateAndSanitizeInput(description, "default");
+      sanitizedCategory = validateAndSanitizeInput(category, "name");
+      sanitizedSubCategory = validateAndSanitizeInput(subCategory, "name");
+
+      // Validate price
+      const priceNum = Number(price);
+      if (isNaN(priceNum) || priceNum <= 0) {
+        throw new Error("Price must be a positive number");
+      }
+
+      // Validate sizes (should be valid JSON)
+      JSON.parse(sizes);
+    } catch (validationError) {
+      await logSecurityEvent(
+        req,
+        "INVALID_PRODUCT_INPUT",
+        validationError.message
+      );
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
+    }
 
     const image1 = req.files.image1 && req.files.image1[0];
     const image2 = req.files.image2 && req.files.image2[0];
@@ -34,11 +70,11 @@ export const addProduct = async (req, res) => {
     );
 
     const productData = {
-      name,
-      description,
-      category,
+      name: sanitizedName,
+      description: sanitizedDescription,
+      category: sanitizedCategory,
       price: Number(price),
-      subCategory,
+      subCategory: sanitizedSubCategory,
       bestSeller: bestSeller === "true" ? true : false,
       sizes: JSON.parse(sizes),
       image: imagesUrl,
@@ -54,17 +90,17 @@ export const addProduct = async (req, res) => {
     // Track admin action for adding product
     if (req.admin && req.admin.id) {
       adminSessionTracker.trackAction(req.admin.id, "ADD_PRODUCT", req.ip, {
-        productName: name,
+        productName: sanitizedName,
         productId: product._id,
-        category,
-        price,
+        category: sanitizedCategory,
+        price: Number(price),
       });
     }
 
     res.json({ success: true, message: "Product Added" });
   } catch (e) {
     console.log(e);
-    res.json({ success: false, message: e.message });
+    res.status(500).json({ success: false, message: e.message });
   }
 };
 
@@ -75,29 +111,54 @@ export const listProduct = async (req, res) => {
     res.json({ success: true, products });
   } catch (e) {
     console.log(e);
-    res.json({ success: false, message: e.message });
+    res.status(500).json({ success: false, message: e.message });
   }
 };
 
 // function for remove product
 export const removeProduct = async (req, res) => {
   try {
-    const productToDelete = await productModel.findById(req.body.id);
+    const { id } = req.body;
 
-    await productModel.findByIdAndDelete(req.body.id);
+    // Validate and sanitize product ID
+    let sanitizedProductId;
+    try {
+      sanitizedProductId = validateAndSanitizeInput(id, "id");
+    } catch (validationError) {
+      await logSecurityEvent(
+        req,
+        "INVALID_PRODUCT_DELETE_INPUT",
+        validationError.message
+      );
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
+    }
+
+    const productToDelete = await productModel.findById(sanitizedProductId);
+
+    if (!productToDelete) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    await productModel.findByIdAndDelete(sanitizedProductId);
 
     // Track admin action for removing product
     if (req.admin && req.admin.id) {
       adminSessionTracker.trackAction(req.admin.id, "DELETE_PRODUCT", req.ip, {
-        productId: req.body.id,
-        productName: productToDelete?.name || "Unknown",
+        productId: sanitizedProductId,
+        productName: productToDelete.name || "Unknown",
       });
     }
 
     res.json({ success: true, message: "Product Removed" });
   } catch (e) {
     console.log(e);
-    res.json({ success: false, message: e.message });
+    res.status(500).json({ success: false, message: e.message });
   }
 };
 
@@ -105,11 +166,35 @@ export const removeProduct = async (req, res) => {
 export const singleProduct = async (req, res) => {
   try {
     const { productId } = req.body;
-    const product = await productModel.findById(productId);
+
+    // Validate and sanitize product ID
+    let sanitizedProductId;
+    try {
+      sanitizedProductId = validateAndSanitizeInput(productId, "id");
+    } catch (validationError) {
+      await logSecurityEvent(
+        req,
+        "INVALID_PRODUCT_FETCH_INPUT",
+        validationError.message
+      );
+      return res.status(400).json({
+        success: false,
+        message: validationError.message,
+      });
+    }
+
+    const product = await productModel.findById(sanitizedProductId);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
 
     res.json({ success: true, product });
   } catch (e) {
     console.log(e);
-    res.json({ success: false, message: e.message });
+    res.status(500).json({ success: false, message: e.message });
   }
 };

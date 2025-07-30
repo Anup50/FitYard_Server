@@ -4,6 +4,7 @@ import {
   getAuditStats,
   exportAuditLogs,
   getFilterOptions,
+  getSecurityEvents,
 } from "../controllers/auditController.js";
 import adminAuth from "../middleware/adminAuth.js";
 import { csrfProtection } from "../middleware/csrfProtection.js";
@@ -21,6 +22,14 @@ auditRouter.get("/logs", adminAuth, auditRateLimit, getAuditLogs);
 
 // Get basic audit statistics
 auditRouter.get("/stats", adminAuth, auditRateLimit, getAuditStats);
+
+// Get security events (NoSQL injection attempts, etc.)
+auditRouter.get(
+  "/security-events",
+  adminAuth,
+  auditRateLimit,
+  getSecurityEvents
+);
 
 // Export audit logs (CSV) - CSRF protected
 auditRouter.get(
