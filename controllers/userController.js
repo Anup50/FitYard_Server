@@ -18,7 +18,6 @@ import {
 } from "../middleware/security.js";
 import {
   generateResetToken,
-  generateResetOTP,
   sendPasswordResetEmail,
   validatePasswordStrength,
 } from "../utils/passwordReset.js";
@@ -27,12 +26,10 @@ const createToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "1d" });
 };
 
-//Route for user login
 export const loginUser = async (req, res) => {
   try {
     const { email, password, captcha } = req.body;
 
-    // Validate and sanitize inputs
     let sanitizedEmail, sanitizedPassword;
 
     try {
@@ -50,7 +47,6 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    // Verify reCAPTCHA
     if (!captcha) {
       return res
         .status(400)
@@ -65,24 +61,75 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    const user = await userModel.findOne({ email: sanitizedEmail });
+    const user = await userModel
+      .findOne({ email: sanitizedEmail })
+      .select("+password +failedLoginAttempts +accountLockedUntil");
     if (!user) {
+      await logSecurityEvent(
+        req,
+        "LOGIN_USER_NOT_FOUND",
+        `Login attempt for non-existent user: ${sanitizedEmail}`
+      );
       return res
-        .status(404)
-        .json({ success: false, message: "User does not exists" });
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    if (user.isLocked) {
+      const lockoutEndTime = new Date(user.accountLockedUntil);
+      const remainingTime = Math.ceil(
+        (lockoutEndTime - Date.now()) / (1000 * 60)
+      ); // minutes
+
+      await createAuditLog({
+        userId: user._id,
+        userType: "User",
+        userEmail: user.email,
+        action: "LOGIN_ATTEMPT_LOCKED_ACCOUNT",
+        description: `Login attempt on locked account. Lockout ends at ${lockoutEndTime.toISOString()}`,
+        method: req.method,
+        endpoint: req.path,
+        ipAddress: req.ip,
+        status: "BLOCKED",
+        metadata: {
+          remainingLockoutMinutes: remainingTime,
+          userAgent: req.get("User-Agent"),
+        },
+      });
+
+      return res.status(423).json({
+        success: false,
+        message: `Account is locked due to multiple failed login attempts. Please try again in ${remainingTime} minutes.`,
+        lockoutInfo: {
+          lockedUntil: lockoutEndTime,
+          remainingMinutes: remainingTime,
+        },
+      });
+    }
+
+    if (!user.password || !sanitizedPassword) {
+      await logSecurityEvent(
+        req,
+        "LOGIN_INVALID_PASSWORD_DATA",
+        `Password validation failed - missing password data for: ${sanitizedEmail}`
+      );
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
     }
 
     const isMatch = await bcrypt.compare(sanitizedPassword, user.password);
 
     if (isMatch) {
-      // Generate OTP for login verification
+      if (user.failedLoginAttempts > 0) {
+        await user.resetFailedAttempts();
+      }
+
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
       const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
-
-      // Remove any existing temp login for this user
       await tempLoginModel.deleteOne({ userId: user._id });
 
-      // Store OTP in tempLogin collection
       await tempLoginModel.create({
         userId: user._id,
         email: user.email,
@@ -90,11 +137,9 @@ export const loginUser = async (req, res) => {
         otpExpires,
       });
 
-      // Send OTP via email
       try {
         await sendOtpEmail(email, otp);
 
-        // Log OTP sent for login
         logActivity(
           user._id,
           "LOGIN_OTP_SENT",
@@ -109,7 +154,6 @@ export const loginUser = async (req, res) => {
           message: "OTP sent to your email. Please verify to complete login.",
         });
       } catch (err) {
-        // Clean up temp login if email fails
         await tempLoginModel.deleteOne({ userId: user._id });
         logError("LOGIN_OTP_EMAIL_ERROR", err.message, { email, ip: req.ip });
         return res.json({
@@ -118,29 +162,77 @@ export const loginUser = async (req, res) => {
         });
       }
     } else {
-      // Log failed login attempt
+      await user.incFailedAttempts();
+
+      const updatedUser = await userModel
+        .findById(user._id)
+        .select("failedLoginAttempts accountLockedUntil isLocked");
+
+      await createAuditLog({
+        userId: user._id,
+        userType: "User",
+        userEmail: user.email,
+        action: updatedUser.isLocked
+          ? "LOGIN_FAILED_ACCOUNT_LOCKED"
+          : "LOGIN_FAILED_INVALID_PASSWORD",
+        description: updatedUser.isLocked
+          ? `Account locked after ${updatedUser.failedLoginAttempts} failed attempts`
+          : `Failed login attempt ${updatedUser.failedLoginAttempts}/5`,
+        method: req.method,
+        endpoint: req.path,
+        ipAddress: req.ip,
+        status: "FAILURE",
+        metadata: {
+          failedAttempts: updatedUser.failedLoginAttempts,
+          accountLocked: updatedUser.isLocked,
+          userAgent: req.get("User-Agent"),
+        },
+      });
+
+      if (updatedUser.isLocked) {
+        return res.status(423).json({
+          success: false,
+          message:
+            "Account has been locked due to multiple failed login attempts. Please try again in 2 hours.",
+          lockoutInfo: {
+            lockedUntil: updatedUser.accountLockedUntil,
+            remainingMinutes: 120,
+          },
+        });
+      }
+
+      const remainingAttempts = 5 - updatedUser.failedLoginAttempts;
+
       logActivity(
         null,
         "LOGIN_FAILED",
-        `Failed login attempt for email: ${email}`,
+        `Failed login attempt for email: ${email} (${updatedUser.failedLoginAttempts}/5 attempts)`,
         req.ip,
         req.get("User-Agent")
       );
-      return res.json({ success: false, message: "Invalid Credentials" });
+
+      return res.status(401).json({
+        success: false,
+        message: `Invalid credentials. ${remainingAttempts} attempts remaining before account lockout.`,
+        attemptsRemaining: remainingAttempts,
+      });
     }
   } catch (e) {
-    console.log(e);
+    console.log("Login error:", e);
+
     logError("LOGIN_ERROR", e.message, { email: req.body.email, ip: req.ip });
-    res.json({ success: false, message: e.message });
+
+    res.status(500).json({
+      success: false,
+      message: "Login failed. Please try again.",
+    });
   }
 };
 
-// Login OTP verification
 export const verifyLoginOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
-    // Find temp login record
     const tempLogin = await tempLoginModel.findOne({ email });
     if (!tempLogin) {
       return res.json({
@@ -149,7 +241,6 @@ export const verifyLoginOtp = async (req, res) => {
       });
     }
 
-    // Check if OTP matches
     if (tempLogin.otp !== otp) {
       logActivity(
         tempLogin.userId,
@@ -161,7 +252,6 @@ export const verifyLoginOtp = async (req, res) => {
       return res.json({ success: false, message: "Invalid OTP" });
     }
 
-    // Check if OTP has expired
     if (tempLogin.otpExpires < new Date()) {
       await tempLoginModel.deleteOne({ email });
       return res.json({
@@ -170,15 +260,11 @@ export const verifyLoginOtp = async (req, res) => {
       });
     }
 
-    // OTP is valid, complete the login
     const user = await userModel.findById(tempLogin.userId).select("-password");
 
-    // Check if password is expired or must be changed
     if (user.isPasswordExpired || user.mustChangePassword) {
-      // Clean up temp login record
       await tempLoginModel.deleteOne({ email });
 
-      // Log password expiry detected
       await createAuditLog({
         userId: user._id,
         userType: "User",
@@ -205,18 +291,15 @@ export const verifyLoginOtp = async (req, res) => {
     }
 
     const token = createToken(user._id);
-
     res.cookie("token", token, {
       httpOnly: true,
       secure: true,
       sameSite: "none",
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      maxAge: 24 * 60 * 60 * 1000,
     });
 
-    // Clean up temp login record
     await tempLoginModel.deleteOne({ email });
 
-    // Log successful login
     logActivity(
       user._id,
       "USER_LOGIN",
@@ -225,7 +308,6 @@ export const verifyLoginOtp = async (req, res) => {
       req.get("User-Agent")
     );
 
-    // Check if password expires soon (within 7 days)
     const daysUntilExpiry = Math.ceil(
       (user.passwordExpiresAt - new Date()) / (1000 * 60 * 60 * 24)
     );
@@ -252,7 +334,6 @@ export const verifyLoginOtp = async (req, res) => {
   }
 };
 
-//Route for user register
 export const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -276,7 +357,6 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // Check if user already exists in main or temp collection
     const exists = await userModel.findOne({ email: sanitizedEmail });
     if (exists) {
       return res
@@ -291,7 +371,6 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // Validate email format (additional check)
     if (!validator.isEmail(sanitizedEmail)) {
       return res.status(400).json({
         success: false,
@@ -299,7 +378,6 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // Validate password strength
     if (
       !validator.isStrongPassword(sanitizedPassword, {
         minLength: 8,
@@ -316,15 +394,12 @@ export const registerUser = async (req, res) => {
       });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(sanitizedPassword, salt);
 
-    // Generate OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
 
-    // Store in tempUser collection
     await tempUserModel.create({
       name: sanitizedName,
       email: sanitizedEmail,
@@ -333,7 +408,6 @@ export const registerUser = async (req, res) => {
       otpExpires,
     });
 
-    // Send OTP via email
     try {
       await sendOtpEmail(sanitizedEmail, otp);
     } catch (err) {
@@ -351,7 +425,6 @@ export const registerUser = async (req, res) => {
         "OTP sent to your email. Please verify to complete registration.",
     });
 
-    // Log registration attempt
     logActivity(
       null,
       "REGISTRATION_ATTEMPT",
@@ -369,7 +442,6 @@ export const registerUser = async (req, res) => {
   }
 };
 
-// OTP verification and final registration
 export const verifyUserOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -391,9 +463,7 @@ export const verifyUserOtp = async (req, res) => {
       });
     }
 
-    // Move user to main userModel
     const { name, password } = tempUser;
-    // Password already validated and hashed in tempUser
     const newUser = new userModel({ name, email, password });
     await newUser.save();
     await tempUserModel.deleteOne({ email });
@@ -449,11 +519,52 @@ export const adminLogin = async (req, res) => {
     }
 
     // Find admin in database
-    const admin = await adminModel.findOne({ email: sanitizedEmail });
+    const admin = await adminModel
+      .findOne({ email: sanitizedEmail })
+      .select("+password +failedLoginAttempts +accountLockedUntil");
     if (!admin) {
+      await logSecurityEvent(
+        req,
+        "ADMIN_LOGIN_USER_NOT_FOUND",
+        `Admin login attempt for non-existent user: ${sanitizedEmail}`
+      );
       return res
-        .status(404)
-        .json({ success: false, message: "Admin not found" });
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    // Check if admin account is locked
+    if (admin.isLocked) {
+      const lockoutEndTime = new Date(admin.accountLockedUntil);
+      const remainingTime = Math.ceil(
+        (lockoutEndTime - Date.now()) / (1000 * 60)
+      ); // minutes
+
+      await createAuditLog({
+        userId: admin._id,
+        userType: "Admin",
+        userEmail: admin.email,
+        action: "ADMIN_LOGIN_ATTEMPT_LOCKED_ACCOUNT",
+        description: `Admin login attempt on locked account. Lockout ends at ${lockoutEndTime.toISOString()}`,
+        method: req.method,
+        endpoint: req.path,
+        ipAddress: req.ip,
+        status: "BLOCKED",
+        metadata: {
+          remainingLockoutMinutes: remainingTime,
+          userAgent: req.get("User-Agent"),
+        },
+      });
+
+      return res.status(423).json({
+        // 423 = Locked
+        success: false,
+        message: `Admin account is locked due to multiple failed login attempts. Please try again in ${remainingTime} minutes.`,
+        lockoutInfo: {
+          lockedUntil: lockoutEndTime,
+          remainingMinutes: remainingTime,
+        },
+      });
     }
 
     // Check if admin is active
@@ -464,10 +575,28 @@ export const adminLogin = async (req, res) => {
       });
     }
 
+    // Verify password exists and is valid before comparison
+    if (!admin.password || !sanitizedPassword) {
+      await logSecurityEvent(
+        req,
+        "ADMIN_LOGIN_INVALID_PASSWORD_DATA",
+        `Admin password validation failed - missing password data for: ${sanitizedEmail}`
+      );
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+
     // Compare password with hashed password
     const isMatch = await bcrypt.compare(sanitizedPassword, admin.password);
 
     if (isMatch) {
+      // Reset failed attempts on successful login
+      if (admin.failedLoginAttempts > 0) {
+        await admin.resetFailedAttempts();
+      }
+
       // Track successful admin login
       adminSessionTracker.trackLogin(
         admin._id.toString(),
@@ -511,6 +640,35 @@ export const adminLogin = async (req, res) => {
         req.get("User-Agent")
       );
     } else {
+      // Increment failed attempts
+      await admin.incFailedAttempts();
+
+      const updatedAdmin = await adminModel
+        .findById(admin._id)
+        .select("failedLoginAttempts accountLockedUntil isLocked");
+
+      // Log failed attempt
+      await createAuditLog({
+        userId: admin._id,
+        userType: "Admin",
+        userEmail: admin.email,
+        action: updatedAdmin.isLocked
+          ? "ADMIN_LOGIN_FAILED_ACCOUNT_LOCKED"
+          : "ADMIN_LOGIN_FAILED_INVALID_PASSWORD",
+        description: updatedAdmin.isLocked
+          ? `Admin account locked after ${updatedAdmin.failedLoginAttempts} failed attempts`
+          : `Failed admin login attempt ${updatedAdmin.failedLoginAttempts}/5`,
+        method: req.method,
+        endpoint: req.path,
+        ipAddress: req.ip,
+        status: "FAILURE",
+        metadata: {
+          failedAttempts: updatedAdmin.failedLoginAttempts,
+          accountLocked: updatedAdmin.isLocked,
+          userAgent: req.get("User-Agent"),
+        },
+      });
+
       // Track failed admin login attempt
       adminSessionTracker.trackLogin(
         admin._id.toString(),
@@ -519,23 +677,49 @@ export const adminLogin = async (req, res) => {
         false
       );
 
+      if (updatedAdmin.isLocked) {
+        return res.status(423).json({
+          success: false,
+          message:
+            "Admin account has been locked due to multiple failed login attempts. Please try again in 2 hours.",
+          lockoutInfo: {
+            lockedUntil: updatedAdmin.accountLockedUntil,
+            remainingMinutes: 120,
+          },
+        });
+      }
+
+      const remainingAttempts = 5 - updatedAdmin.failedLoginAttempts;
+
       // Log failed admin login attempt
       logActivity(
         null,
         "ADMIN_LOGIN_FAILED",
-        `Failed admin login attempt for email: ${email}`,
+        `Failed admin login attempt for email: ${email} (${updatedAdmin.failedLoginAttempts}/5 attempts)`,
         req.ip,
         req.get("User-Agent")
       );
-      res.json({ success: false, message: "Invalid credentials" });
+
+      res.status(401).json({
+        success: false,
+        message: `Invalid credentials. ${remainingAttempts} attempts remaining before account lockout.`,
+        attemptsRemaining: remainingAttempts,
+      });
     }
   } catch (e) {
-    console.log(e);
+    console.log("Admin login error:", e);
+
+    // Log the error but don't expose internal details
     logError("ADMIN_LOGIN_ERROR", e.message, {
       email: req.body.email,
       ip: req.ip,
     });
-    res.json({ success: false, message: e.message });
+
+    // Always return a generic error message for security
+    res.status(500).json({
+      success: false,
+      message: "Admin login failed. Please try again.",
+    });
   }
 };
 
@@ -867,20 +1051,17 @@ export const resendLoginOtp = async (req, res) => {
   }
 };
 
-// Route for user logout
 export const logoutUser = async (req, res) => {
   try {
     const userId = req.body.userId;
 
-    // Clear the JWT cookie
     res.clearCookie("token", {
       httpOnly: true,
-      secure: true, // Use secure in production
+      secure: true,
       sameSite: "strict",
       path: "/",
     });
 
-    // Clear CSRF cookie as well for security
     res.clearCookie("_csrf", {
       httpOnly: true,
       secure: true,
@@ -888,12 +1069,10 @@ export const logoutUser = async (req, res) => {
       path: "/",
     });
 
-    // Clean up any temporary login sessions
     if (userId) {
       await tempLoginModel.deleteMany({ userId });
     }
 
-    // Log the logout activity
     logActivity("USER_LOGOUT", "User logged out successfully", {
       userId: userId || "unknown",
       ip: req.ip,
@@ -917,20 +1096,17 @@ export const logoutUser = async (req, res) => {
   }
 };
 
-// Route for admin logout
 export const logoutAdmin = async (req, res) => {
   try {
     const adminId = req.body.adminId;
 
-    // Clear the JWT cookie
     res.clearCookie("token", {
       httpOnly: true,
-      secure: true, // Use secure in production
+      secure: true,
       sameSite: "strict",
       path: "/",
     });
 
-    // Clear CSRF cookie as well for security
     res.clearCookie("_csrf", {
       httpOnly: true,
       secure: true,
@@ -962,12 +1138,10 @@ export const logoutAdmin = async (req, res) => {
   }
 };
 
-// Get admin session summary and security status
 export const getAdminSecurityStatus = async (req, res) => {
   try {
-    const adminId = req.admin.id; // From auth middleware
+    const adminId = req.admin.id;
 
-    // Get session summary from tracker
     const sessionSummary = adminSessionTracker.getAdminSessionSummary(adminId);
 
     if (!sessionSummary) {
@@ -998,7 +1172,6 @@ export const getAdminSecurityStatus = async (req, res) => {
   }
 };
 
-// Check password expiry middleware
 export const checkPasswordExpiry = async (req, res, next) => {
   try {
     if (req.user && req.user.isPasswordExpired) {
@@ -1014,12 +1187,10 @@ export const checkPasswordExpiry = async (req, res, next) => {
   }
 };
 
-// Update password
 export const updatePassword = async (req, res) => {
   try {
     const { userId, currentPassword, newPassword } = req.body;
 
-    // Validate and sanitize inputs
     let sanitizedUserId, sanitizedCurrentPassword, sanitizedNewPassword;
 
     try {
@@ -1048,13 +1219,11 @@ export const updatePassword = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    // Verify current password
     const isCurrentPasswordValid = await bcrypt.compare(
       sanitizedCurrentPassword,
       user.password
     );
     if (!isCurrentPasswordValid) {
-      // Log failed password change attempt
       await createAuditLog({
         userId: user._id,
         userType: "User",
@@ -1075,7 +1244,6 @@ export const updatePassword = async (req, res) => {
       });
     }
 
-    // Check if new password is the same as current password
     const isSamePassword = await bcrypt.compare(
       sanitizedNewPassword,
       user.password
@@ -1087,7 +1255,6 @@ export const updatePassword = async (req, res) => {
       });
     }
 
-    // Validate new password strength
     const passwordValidation = validatePasswordStrength(sanitizedNewPassword);
     if (!passwordValidation.valid) {
       return res.status(400).json({
@@ -1096,7 +1263,6 @@ export const updatePassword = async (req, res) => {
       });
     }
 
-    // Check if new password was used recently
     if (user.wasPasswordUsedRecently(sanitizedNewPassword)) {
       return res.status(400).json({
         success: false,

@@ -59,6 +59,16 @@ const auditLogSchema = new mongoose.Schema(
         "PASSWORD_RESET_FAILED",
         "LOGIN_PASSWORD_EXPIRED",
         "ADMIN_FORCE_PASSWORD_CHANGE",
+        // Account lockout actions
+        "LOGIN_ATTEMPT_LOCKED_ACCOUNT",
+        "LOGIN_FAILED_ACCOUNT_LOCKED",
+        "LOGIN_FAILED_INVALID_PASSWORD",
+        "ADMIN_LOGIN_ATTEMPT_LOCKED_ACCOUNT",
+        "ADMIN_LOGIN_FAILED_ACCOUNT_LOCKED",
+        "ADMIN_LOGIN_FAILED_INVALID_PASSWORD",
+        // Security events
+        "SECURITY_NOSQL_INJECTION_BLOCKED",
+        "SECURITY_INVALID_INPUT",
       ],
     },
 
@@ -88,7 +98,7 @@ const auditLogSchema = new mongoose.Schema(
     status: {
       type: String,
       required: true,
-      enum: ["SUCCESS", "FAILURE"],
+      enum: ["SUCCESS", "FAILURE", "BLOCKED", "DETECTED"],
       default: "SUCCESS",
     },
 

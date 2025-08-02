@@ -118,13 +118,33 @@ export const listProduct = async (req, res) => {
 // function for remove product
 export const removeProduct = async (req, res) => {
   try {
-    const { id } = req.body;
+    console.log("Remove product request:", {
+      params: req.params,
+      body: req.body,
+      url: req.url,
+      method: req.method,
+    });
+
+    const { id } = req.params;
+
+    // Check if ID is provided
+    if (!id) {
+      console.log("No ID provided in params");
+      return res.status(400).json({
+        success: false,
+        message: "Product ID is required",
+      });
+    }
+
+    console.log("Product ID from params:", id);
 
     // Validate and sanitize product ID
     let sanitizedProductId;
     try {
       sanitizedProductId = validateAndSanitizeInput(id, "id");
+      console.log("Sanitized product ID:", sanitizedProductId);
     } catch (validationError) {
+      console.log("Validation error:", validationError.message);
       await logSecurityEvent(
         req,
         "INVALID_PRODUCT_DELETE_INPUT",

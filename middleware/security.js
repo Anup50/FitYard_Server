@@ -2,14 +2,12 @@ import mongoSanitize from "express-mongo-sanitize";
 import helmet from "helmet";
 import { createAuditLog } from "./auditLogger.js";
 
-// MongoDB injection prevention with logging
 export const mongoSanitizer = mongoSanitize({
   onSanitize: ({ req, key }) => {
     console.warn(
-      `⚠️  NoSQL injection attempt blocked: ${key} in ${req.method} ${req.path} from IP: ${req.ip}`
+      `NoSQL injection attempt blocked: ${key} in ${req.method} ${req.path} from IP: ${req.ip}`
     );
 
-    // Log security event asynchronously
     setImmediate(async () => {
       try {
         await createAuditLog({
@@ -36,7 +34,6 @@ export const mongoSanitizer = mongoSanitize({
   replaceWith: "_BLOCKED_",
 });
 
-// Security headers with CORS compatibility
 export const securityHeaders = helmet({
   contentSecurityPolicy: {
     directives: {
@@ -61,7 +58,6 @@ export const securityHeaders = helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
 });
 
-// Input validation helper
 export const validateAndSanitizeInput = (input, type) => {
   if (input === null || input === undefined) {
     throw new Error(`${type} is required`);
@@ -71,7 +67,6 @@ export const validateAndSanitizeInput = (input, type) => {
     throw new Error(`Invalid ${type} format - must be string`);
   }
 
-  // Check for potential NoSQL injection patterns
   const dangerousPatterns = [
     /\$where/i,
     /\$ne/i,
@@ -94,7 +89,6 @@ export const validateAndSanitizeInput = (input, type) => {
     }
   }
 
-  // Remove any remaining MongoDB operators
   const sanitized = input.replace(/[${}]/g, "").trim();
 
   if (!sanitized) {
@@ -103,7 +97,6 @@ export const validateAndSanitizeInput = (input, type) => {
 
   switch (type) {
     case "email":
-      // Basic email validation
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(sanitized)) {
         throw new Error("Invalid email format");
@@ -123,7 +116,7 @@ export const validateAndSanitizeInput = (input, type) => {
       if (sanitized.length > 100) {
         throw new Error("Name too long");
       }
-      // Allow letters, spaces, hyphens, apostrophes
+
       const nameRegex = /^[a-zA-Z\s\-']+$/;
       if (!nameRegex.test(sanitized)) {
         throw new Error(
@@ -133,7 +126,6 @@ export const validateAndSanitizeInput = (input, type) => {
       return sanitized;
 
     case "id":
-      // MongoDB ObjectId validation
       const objectIdRegex = /^[0-9a-fA-F]{24}$/;
       if (!objectIdRegex.test(sanitized)) {
         throw new Error("Invalid ID format");
@@ -148,7 +140,6 @@ export const validateAndSanitizeInput = (input, type) => {
   }
 };
 
-// Security event logger
 export const logSecurityEvent = async (req, eventType, details) => {
   try {
     await createAuditLog({

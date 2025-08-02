@@ -304,17 +304,10 @@ const adminSessionTracker = {
     return false;
   },
 
-  // Basic geographic anomaly detection
   detectGeographicAnomalies: (adminId, adminData, suspiciousIndicators) => {
     const activeSessions = adminData.sessions.filter((s) => s.isActive);
 
-    // Simple IP-based location detection (you'd use a real IP geolocation service)
     const getIPLocation = (ip) => {
-      // This is a mock function - in production, use services like:
-      // - MaxMind GeoIP2
-      // - ipinfo.io
-      // - ip-api.com
-
       const ipParts = ip.split(".");
       return {
         country: ipParts[0] < 128 ? "US" : "International",
@@ -328,7 +321,6 @@ const adminSessionTracker = {
       location: getIPLocation(session.ip),
     }));
 
-    // Check for sessions from different countries
     const countries = new Set(sessionLocations.map((s) => s.location.country));
     if (countries.size > 1) {
       suspiciousIndicators.push({
@@ -343,7 +335,6 @@ const adminSessionTracker = {
     }
   },
 
-  // Trigger security alerts for high-priority incidents
   triggerSecurityAlert: (adminId, alerts) => {
     const alertKey = `${adminId}-${Date.now()}`;
 
@@ -353,12 +344,6 @@ const adminSessionTracker = {
       timestamp: new Date(),
       status: "ACTIVE",
     });
-
-    // In production, you would:
-    // 1. Send email notifications to security team
-    // 2. Send SMS alerts for critical issues
-    // 3. Post to security Slack channel
-    // 4. Log to security information and event management (SIEM) system
 
     console.log(`🚨 SECURITY ALERT for Admin ${adminId}:`);
     alerts.forEach((alert) => {
@@ -393,12 +378,6 @@ const adminSessionTracker = {
       `🔴 CRITICAL ALERT: Taking automatic security actions for Admin ${adminId}`
     );
 
-    // Potential automatic responses:
-    // 1. Force logout all sessions
-    // 2. Temporarily disable admin account
-    // 3. Require password reset
-    // 4. Enable additional MFA requirements
-
     const adminData = adminSessions.get(adminId);
     if (adminData) {
       // Force logout all active sessions
@@ -420,7 +399,6 @@ const adminSessionTracker = {
     }
   },
 
-  // Get admin session summary
   getAdminSessionSummary: (adminId) => {
     if (!adminSessions.has(adminId)) {
       return null;
@@ -447,7 +425,6 @@ const adminSessionTracker = {
     };
   },
 
-  // Calculate overall risk level
   calculateRiskLevel: (adminData) => {
     const now = new Date();
     const recentFlags = adminData.suspiciousFlags.filter(
@@ -470,28 +447,23 @@ const adminSessionTracker = {
     return "LOW";
   },
 
-  // Clean up old data
   cleanup: () => {
     const now = new Date();
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
     adminSessions.forEach((adminData, adminId) => {
-      // Clean old sessions
       adminData.sessions = adminData.sessions.filter(
         (session) => session.loginTime > oneDayAgo
       );
 
-      // Clean old failed attempts
       adminData.failedAttempts = adminData.failedAttempts.filter(
         (attempt) => attempt.timestamp > oneDayAgo
       );
 
-      // Clean old action history
       adminData.actionHistory = adminData.actionHistory.filter(
         (action) => action.timestamp > oneDayAgo
       );
 
-      // Clean old suspicious flags
       adminData.suspiciousFlags = adminData.suspiciousFlags.filter(
         (flag) => flag.timestamp > oneDayAgo
       );

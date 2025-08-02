@@ -16,36 +16,21 @@ import auditRouter from "./routes/auditRoute.js";
 import https from "https";
 import fs from "fs";
 
-//App Config
 const app = express();
-const port = process.env.PORT || 4000;
+
 connectDB();
 connectCloudinary();
-
-//Security Middlewares (Order matters!)
-// 1. Security headers first
 app.use(securityHeaders);
 
-// 2. NoSQL injection prevention
 app.use(mongoSanitizer);
-
-// 3. JSON parsing with limits
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 
-// 4. Audit logging middleware - logs all requests for security monitoring
 app.use(auditMiddleware());
 
 app.use(
   cors({
-    origin: [
-      "https://localhost:3000",
-      "http://localhost:3000",
-      "https://localhost:5173",
-      "http://localhost:5173",
-      "https://localhost:5174",
-      "http://localhost:5174",
-    ],
+    origin: ["https://localhost:3000"],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "token", "x-csrf-token"],
@@ -53,13 +38,7 @@ app.use(
   })
 );
 
-// CSRF Protection - Apply to state-changing routes only
-// Note: CSRF protection will be applied selectively to routes that need it
-
-// CSRF token endpoint
 app.get("/api/csrf-token", getCsrfToken);
-
-//API endpoints
 app.use("/api/user", userRouter);
 app.use("/api/product", productRouter);
 app.use("/api/cart", cartRouter);
@@ -69,12 +48,12 @@ app.use("/api/audit", auditRouter); // Admin-only audit log management
 app.get("/", (req, res) => {
   res.send("API WORKING");
 });
+const port = process.env.PORT || 4000;
 
 const sslOptions = {
   key: fs.readFileSync(".cert/key.pem"),
   cert: fs.readFileSync(".cert/cert.pem"),
 };
-
 https.createServer(sslOptions, app).listen(port, () => {
-  console.log(`HTTPS server started on https://localhost:${port} ❤️`);
+  console.log(`HTTPS server started on https://localhost:${port}`);
 });

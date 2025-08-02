@@ -7,14 +7,12 @@ const sendOtpEmail = async (
   textContent = null
 ) => {
   try {
-    // Check if credentials are available
     if (!process.env.GMAIL_USER || !process.env.GMAIL_PASS) {
       throw new Error(
         "Email credentials not configured. Please set GMAIL_USER and GMAIL_PASS in .env file"
       );
     }
 
-    // Configure transporter for Gmail
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -25,9 +23,7 @@ const sendOtpEmail = async (
 
     let html, text;
 
-    // Check if this is an OTP email or a custom email (like password reset)
     if (subject === "Your FitYard OTP Code" && !textContent) {
-      // Traditional OTP email
       html = `
         <div style="font-family: Arial, sans-serif; max-width: 400px; margin: auto; border: 1px solid #eee; border-radius: 8px; padding: 24px;">
           <h2 style="color: #2e7d32;">FitYard OTP Verification</h2>
@@ -40,12 +36,10 @@ const sendOtpEmail = async (
         </div>
       `;
     } else {
-      // Custom email (like password reset)
       html = content;
       text = textContent;
     }
 
-    // Send mail
     const mailOptions = {
       from: `FitYard <${process.env.GMAIL_USER}>`,
       to,
@@ -53,7 +47,6 @@ const sendOtpEmail = async (
       html,
     };
 
-    // Add text version if provided
     if (text) {
       mailOptions.text = text;
     }

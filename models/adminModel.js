@@ -26,6 +26,10 @@ const adminSchema = new mongoose.Schema({
   passwordResetToken: { type: String },
   passwordResetExpires: { type: Date },
 
+  // Account lockout fields
+  failedLoginAttempts: { type: Number, default: 0 },
+  accountLockedUntil: { type: Date },
+
   createdAt: { type: Date, default: Date.now },
   lastLogin: { type: Date },
 });
@@ -40,6 +44,40 @@ adminSchema.methods.wasPasswordUsedRecently = function (password) {
   return this.passwordHistory.some((oldPassword) =>
     bcrypt.compareSync(password, oldPassword.password)
   );
+};
+
+// Virtual to check if account is locked
+adminSchema.virtual("isLocked").get(function () {
+  return !!(this.accountLockedUntil && this.accountLockedUntil > Date.now());
+});
+
+// Method to increment failed attempts and lock account if needed
+adminSchema.methods.incFailedAttempts = function () {
+  // If we have a previous lock that has expired, restart
+  if (this.accountLockedUntil && this.accountLockedUntil < Date.now()) {
+    return this.updateOne({
+      $unset: { accountLockedUntil: 1 },
+      $set: { failedLoginAttempts: 1 },
+    });
+  }
+
+  const updates = { $inc: { failedLoginAttempts: 1 } };
+
+  // Lock account after 5 failed attempts for 2 hours
+  if (this.failedLoginAttempts + 1 >= 5 && !this.isLocked) {
+    updates.$set = {
+      accountLockedUntil: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours
+    };
+  }
+
+  return this.updateOne(updates);
+};
+
+// Method to reset failed attempts on successful login
+adminSchema.methods.resetFailedAttempts = function () {
+  return this.updateOne({
+    $unset: { failedLoginAttempts: 1, accountLockedUntil: 1 },
+  });
 };
 
 // Method to add password to history

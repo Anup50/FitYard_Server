@@ -3,7 +3,6 @@ import adminModel from "../models/adminModel.js";
 
 const adminAuth = async (req, res, next) => {
   try {
-    // Read token from cookie, header, or Authorization
     let token = req.cookies?.token;
     if (!token && req.headers.token) {
       token = req.headers.token;
@@ -22,10 +21,8 @@ const adminAuth = async (req, res, next) => {
       });
     }
 
-    // Verify JWT token
     const tokenDecoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Check if it's an admin token
     if (!tokenDecoded.role || tokenDecoded.role !== "admin") {
       return res.json({
         success: false,
@@ -33,7 +30,6 @@ const adminAuth = async (req, res, next) => {
       });
     }
 
-    // Find admin in database to ensure they still exist and are active
     const admin = await adminModel.findById(tokenDecoded.id);
     if (!admin || !admin.isActive) {
       return res.json({

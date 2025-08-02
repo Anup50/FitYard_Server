@@ -67,13 +67,12 @@ export const createRateLimitWithLogging = (options = {}) => {
 };
 
 export const loginRateLimit = createRateLimitWithLogging({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 5,
   message: "Too many login attempts, please try again later",
   actionType: "LOGIN_RATE_LIMIT_VIOLATION",
 });
 
-// General API rate limiting
 export const generalRateLimit = createRateLimitWithLogging({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // 100 requests per IP
@@ -81,16 +80,14 @@ export const generalRateLimit = createRateLimitWithLogging({
   actionType: "GENERAL_RATE_LIMIT_VIOLATION",
 });
 
-// Admin rate limiting - higher limits
 export const adminRateLimit = createRateLimitWithLogging({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // Higher limit for admins
+  windowMs: 15 * 60 * 1000,
+  max: 200,
   message: "Too many admin requests, please try again later",
   actionType: "ADMIN_RATE_LIMIT_VIOLATION",
   userType: "Admin",
 });
 
-// Audit-specific rate limiting
 export const auditRateLimit = createRateLimitWithLogging({
   windowMs: 5 * 60 * 1000, // 5 minutes
   max: 20, // 20 audit requests per 5 minutes
