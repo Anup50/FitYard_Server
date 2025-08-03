@@ -22,8 +22,8 @@ import {
   validatePasswordStrength,
 } from "../utils/passwordReset.js";
 
-const createToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "1d" });
+const createToken = (id, role = "user") => {
+  return jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: "1d" });
 };
 
 export const loginUser = async (req, res) => {
@@ -79,7 +79,7 @@ export const loginUser = async (req, res) => {
       const lockoutEndTime = new Date(user.accountLockedUntil);
       const remainingTime = Math.ceil(
         (lockoutEndTime - Date.now()) / (1000 * 60)
-      ); // minutes
+      );
 
       await createAuditLog({
         userId: user._id,
@@ -127,7 +127,7 @@ export const loginUser = async (req, res) => {
       }
 
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+      const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
       await tempLoginModel.deleteOne({ userId: user._id });
 
       await tempLoginModel.create({
@@ -290,11 +290,11 @@ export const verifyLoginOtp = async (req, res) => {
       });
     }
 
-    const token = createToken(user._id);
+    const token = createToken(user._id, "user");
     res.cookie("token", token, {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
       maxAge: 24 * 60 * 60 * 1000,
     });
 
@@ -338,7 +338,6 @@ export const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Validate and sanitize inputs
     let sanitizedName, sanitizedEmail, sanitizedPassword;
 
     try {
@@ -398,7 +397,7 @@ export const registerUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(sanitizedPassword, salt);
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
     await tempUserModel.create({
       name: sanitizedName,
@@ -411,7 +410,6 @@ export const registerUser = async (req, res) => {
     try {
       await sendOtpEmail(sanitizedEmail, otp);
     } catch (err) {
-      // Clean up temp user if email fails
       await tempUserModel.deleteOne({ email });
       return res.json({
         success: false,
@@ -468,16 +466,15 @@ export const verifyUserOtp = async (req, res) => {
     await newUser.save();
     await tempUserModel.deleteOne({ email });
 
-    const token = createToken(newUser._id);
+    const token = createToken(newUser._id, "user");
     res.cookie("token", token, {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 24 * 60 * 60 * 1000,
     });
     res.json({ success: true, message: "Registration successful!" });
 
-    // Log successful registration
     logActivity(
       newUser._id,
       "USER_REGISTRATION",
@@ -500,7 +497,6 @@ export const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Validate and sanitize inputs
     let sanitizedEmail, sanitizedPassword;
 
     try {
@@ -518,7 +514,6 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // Find admin in database
     const admin = await adminModel
       .findOne({ email: sanitizedEmail })
       .select("+password +failedLoginAttempts +accountLockedUntil");
@@ -533,12 +528,11 @@ export const adminLogin = async (req, res) => {
         .json({ success: false, message: "Invalid credentials" });
     }
 
-    // Check if admin account is locked
     if (admin.isLocked) {
       const lockoutEndTime = new Date(admin.accountLockedUntil);
       const remainingTime = Math.ceil(
         (lockoutEndTime - Date.now()) / (1000 * 60)
-      ); // minutes
+      );
 
       await createAuditLog({
         userId: admin._id,
@@ -557,7 +551,6 @@ export const adminLogin = async (req, res) => {
       });
 
       return res.status(423).json({
-        // 423 = Locked
         success: false,
         message: `Admin account is locked due to multiple failed login attempts. Please try again in ${remainingTime} minutes.`,
         lockoutInfo: {
@@ -567,7 +560,6 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // Check if admin is active
     if (!admin.isActive) {
       return res.status(403).json({
         success: false,
@@ -575,7 +567,6 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // Verify password exists and is valid before comparison
     if (!admin.password || !sanitizedPassword) {
       await logSecurityEvent(
         req,
@@ -588,16 +579,13 @@ export const adminLogin = async (req, res) => {
       });
     }
 
-    // Compare password with hashed password
     const isMatch = await bcrypt.compare(sanitizedPassword, admin.password);
 
     if (isMatch) {
-      // Reset failed attempts on successful login
       if (admin.failedLoginAttempts > 0) {
         await admin.resetFailedAttempts();
       }
 
-      // Track successful admin login
       adminSessionTracker.trackLogin(
         admin._id.toString(),
         req.ip,
@@ -605,11 +593,9 @@ export const adminLogin = async (req, res) => {
         true
       );
 
-      // Update last login
       admin.lastLogin = new Date();
       await admin.save();
 
-      // Create JWT token with admin ID and role
       const token = jwt.sign(
         { id: admin._id, email: admin.email, role: admin.role },
         process.env.JWT_SECRET,
@@ -617,11 +603,10 @@ export const adminLogin = async (req, res) => {
       );
       res.cookie("token", token, {
         httpOnly: true,
-        secure: true,
-        sameSite: "none",
-        maxAge: 24 * 60 * 60 * 1000, // 1 day
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 24 * 60 * 60 * 1000,
       });
-      // Fetch admin object without password
       const adminData = await adminModel
         .findById(admin._id)
         .select("-password");
@@ -631,7 +616,6 @@ export const adminLogin = async (req, res) => {
         message: "Admin login successful!",
       });
 
-      // Log successful admin login
       logActivity(
         admin._id,
         "ADMIN_LOGIN",
@@ -640,14 +624,12 @@ export const adminLogin = async (req, res) => {
         req.get("User-Agent")
       );
     } else {
-      // Increment failed attempts
       await admin.incFailedAttempts();
 
       const updatedAdmin = await adminModel
         .findById(admin._id)
         .select("failedLoginAttempts accountLockedUntil isLocked");
 
-      // Log failed attempt
       await createAuditLog({
         userId: admin._id,
         userType: "Admin",
@@ -669,7 +651,6 @@ export const adminLogin = async (req, res) => {
         },
       });
 
-      // Track failed admin login attempt
       adminSessionTracker.trackLogin(
         admin._id.toString(),
         req.ip,
@@ -691,7 +672,6 @@ export const adminLogin = async (req, res) => {
 
       const remainingAttempts = 5 - updatedAdmin.failedLoginAttempts;
 
-      // Log failed admin login attempt
       logActivity(
         null,
         "ADMIN_LOGIN_FAILED",
@@ -709,13 +689,11 @@ export const adminLogin = async (req, res) => {
   } catch (e) {
     console.log("Admin login error:", e);
 
-    // Log the error but don't expose internal details
     logError("ADMIN_LOGIN_ERROR", e.message, {
       email: req.body.email,
       ip: req.ip,
     });
 
-    // Always return a generic error message for security
     res.status(500).json({
       success: false,
       message: "Admin login failed. Please try again.",
@@ -728,11 +706,9 @@ export const registerAdmin = async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
-    // Check if this is initial setup (no admins exist) or if called by existing admin
     const adminCount = await adminModel.countDocuments();
     const isInitialSetup = adminCount === 0;
 
-    // If not initial setup, must be called by authenticated admin
     if (!isInitialSetup && !req.admin) {
       return res.json({
         success: false,
@@ -740,13 +716,11 @@ export const registerAdmin = async (req, res) => {
       });
     }
 
-    // Check if admin already exists
     const existingAdmin = await adminModel.findOne({ email });
     if (existingAdmin) {
       return res.json({ success: false, message: "Admin already exists" });
     }
 
-    // Validate email format
     if (!validator.isEmail(email)) {
       return res.json({
         success: false,
@@ -754,7 +728,6 @@ export const registerAdmin = async (req, res) => {
       });
     }
 
-    // Validate password strength
     if (
       !validator.isStrongPassword(password, {
         minLength: 8,
@@ -771,11 +744,9 @@ export const registerAdmin = async (req, res) => {
       });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create new admin
     const newAdmin = new adminModel({
       name,
       email,
@@ -784,7 +755,6 @@ export const registerAdmin = async (req, res) => {
 
     const admin = await newAdmin.save();
 
-    // Create JWT token
     const token = jwt.sign(
       { id: admin._id, email: admin.email, role: admin.role },
       process.env.JWT_SECRET,
@@ -805,10 +775,9 @@ export const registerAdmin = async (req, res) => {
   }
 };
 
-// Get user profile
 export const getUserProfile = async (req, res) => {
   try {
-    const { userId, role } = req.body; // userId and role set by authUser middleware
+    const { userId, role } = req.body;
 
     let user;
     if (role === "admin") {
@@ -831,7 +800,6 @@ export const getUserProfile = async (req, res) => {
   }
 };
 
-// Update user profile
 export const updateUserProfile = async (req, res) => {
   try {
     const { userId, name, email, currentPassword, newPassword } = req.body;
@@ -841,7 +809,6 @@ export const updateUserProfile = async (req, res) => {
       return res.json({ success: false, message: "User not found" });
     }
 
-    // If changing password, verify current password
     if (newPassword) {
       if (!currentPassword) {
         return res.json({
@@ -877,19 +844,16 @@ export const updateUserProfile = async (req, res) => {
         });
       }
 
-      // Hash new password
       const salt = await bcrypt.genSalt(10);
       const hashedNewPassword = await bcrypt.hash(newPassword, salt);
       user.password = hashedNewPassword;
     }
 
-    // Update other fields
     if (name && name.trim() !== "") {
       user.name = name.trim();
     }
 
     if (email && email !== user.email) {
-      // Validate email format
       if (!validator.isEmail(email)) {
         return res.json({
           success: false,
@@ -897,7 +861,6 @@ export const updateUserProfile = async (req, res) => {
         });
       }
 
-      // Check if email already exists
       const emailExists = await userModel.findOne({ email });
       if (emailExists) {
         return res.json({ success: false, message: "Email already exists" });
@@ -923,7 +886,6 @@ export const updateUserProfile = async (req, res) => {
   }
 };
 
-// Resend OTP for registration
 export const resendRegistrationOtp = async (req, res) => {
   try {
     const { email } = req.body;
@@ -932,7 +894,6 @@ export const resendRegistrationOtp = async (req, res) => {
       return res.json({ success: false, message: "Email is required" });
     }
 
-    // Check if there's a pending registration
     const tempUser = await tempUserModel.findOne({ email });
     if (!tempUser) {
       return res.json({
@@ -942,16 +903,13 @@ export const resendRegistrationOtp = async (req, res) => {
       });
     }
 
-    // Generate new OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Update the existing temp user with new OTP
     tempUser.otp = otp;
     tempUser.otpExpires = otpExpires;
     await tempUser.save();
 
-    // Send new OTP via email
     try {
       await sendOtpEmail(email, otp);
 
@@ -988,7 +946,6 @@ export const resendRegistrationOtp = async (req, res) => {
   }
 };
 
-// Resend OTP for login
 export const resendLoginOtp = async (req, res) => {
   try {
     const { email } = req.body;
@@ -997,7 +954,6 @@ export const resendLoginOtp = async (req, res) => {
       return res.json({ success: false, message: "Email is required" });
     }
 
-    // Check if there's a pending login
     const tempLogin = await tempLoginModel.findOne({ email });
     if (!tempLogin) {
       return res.json({
@@ -1006,16 +962,13 @@ export const resendLoginOtp = async (req, res) => {
       });
     }
 
-    // Generate new OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
-    // Update the existing temp login with new OTP
     tempLogin.otp = otp;
     tempLogin.otpExpires = otpExpires;
     await tempLogin.save();
 
-    // Send new OTP via email
     try {
       await sendOtpEmail(email, otp);
 
@@ -1057,14 +1010,14 @@ export const logoutUser = async (req, res) => {
 
     res.clearCookie("token", {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       path: "/",
     });
 
     res.clearCookie("_csrf", {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       path: "/",
     });
@@ -1102,19 +1055,18 @@ export const logoutAdmin = async (req, res) => {
 
     res.clearCookie("token", {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       path: "/",
     });
 
     res.clearCookie("_csrf", {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       path: "/",
     });
 
-    // Log the admin logout activity
     logActivity("ADMIN_LOGOUT", "Admin logged out successfully", {
       adminId: adminId || "unknown",
       ip: req.ip,
@@ -1270,16 +1222,13 @@ export const updatePassword = async (req, res) => {
       });
     }
 
-    // Hash new password
     const salt = await bcrypt.genSalt(10);
     const hashedNewPassword = await bcrypt.hash(sanitizedNewPassword, salt);
 
-    // Add current password to history and update
     user.addPasswordToHistory(user.password);
     user.password = hashedNewPassword;
     await user.save();
 
-    // Log successful password change
     await createAuditLog({
       userId: user._id,
       userType: "User",
@@ -1305,7 +1254,6 @@ export const updatePassword = async (req, res) => {
   }
 };
 
-// Forgot password - send reset link
 export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -1318,7 +1266,6 @@ export const forgotPassword = async (req, res) => {
 
     const user = await userModel.findOne({ email });
     if (!user) {
-      // Don't reveal that user doesn't exist for security
       return res.json({
         success: true,
         message:
@@ -1326,24 +1273,20 @@ export const forgotPassword = async (req, res) => {
       });
     }
 
-    // Generate reset token
     const resetToken = generateResetToken();
     const tokenHash = crypto
       .createHash("sha256")
       .update(resetToken)
       .digest("hex");
 
-    // Set reset token and expiry
     user.passwordResetToken = tokenHash;
-    user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
     await user.save();
 
-    // Send reset email
     try {
       const resetUrl = `${process.env.FRONTEND_URL}/reset-password`;
       await sendPasswordResetEmail(email, resetToken, resetUrl);
 
-      // Log password reset request
       await createAuditLog({
         userId: user._id,
         userType: "User",
@@ -1361,7 +1304,6 @@ export const forgotPassword = async (req, res) => {
         message: "Password reset link sent to your email",
       });
     } catch (emailError) {
-      // Clear reset token if email fails
       user.passwordResetToken = undefined;
       user.passwordResetExpires = undefined;
       await user.save();
@@ -1381,7 +1323,6 @@ export const forgotPassword = async (req, res) => {
   }
 };
 
-// Reset password with token
 export const resetPassword = async (req, res) => {
   try {
     const { email, token, newPassword } = req.body;
@@ -1393,10 +1334,8 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    // Hash the provided token to compare with stored hash
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
 
-    // Find user with valid reset token
     const user = await userModel.findOne({
       email,
       passwordResetToken: tokenHash,
@@ -1404,7 +1343,6 @@ export const resetPassword = async (req, res) => {
     });
 
     if (!user) {
-      // Log failed reset attempt
       await createAuditLog({
         userId: null,
         userType: "User",
@@ -1424,7 +1362,6 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    // Validate new password strength
     const passwordValidation = validatePasswordStrength(newPassword);
     if (!passwordValidation.valid) {
       return res.status(400).json({
@@ -1433,7 +1370,6 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    // Check if new password is the same as current password
     const isSamePassword = await bcrypt.compare(newPassword, user.password);
     if (isSamePassword) {
       return res.status(400).json({
@@ -1442,7 +1378,6 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    // Check if new password was used recently
     if (user.wasPasswordUsedRecently(newPassword)) {
       return res.status(400).json({
         success: false,
@@ -1450,21 +1385,17 @@ export const resetPassword = async (req, res) => {
       });
     }
 
-    // Hash new password
     const salt = await bcrypt.genSalt(10);
     const hashedNewPassword = await bcrypt.hash(newPassword, salt);
 
-    // Add current password to history and update
     user.addPasswordToHistory(user.password);
     user.password = hashedNewPassword;
 
-    // Clear reset token
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
 
     await user.save();
 
-    // Log successful password reset
     await createAuditLog({
       userId: user._id,
       userType: "User",
@@ -1490,7 +1421,6 @@ export const resetPassword = async (req, res) => {
   }
 };
 
-// Get password status (expiry info)
 export const getPasswordStatus = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -1527,7 +1457,6 @@ export const getPasswordStatus = async (req, res) => {
   }
 };
 
-// Force password change (admin function)
 export const forcePasswordChange = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -1545,10 +1474,9 @@ export const forcePasswordChange = async (req, res) => {
     }
 
     user.mustChangePassword = true;
-    user.passwordExpiresAt = new Date(); // Expire immediately
+    user.passwordExpiresAt = new Date();
     await user.save();
 
-    // Log forced password change
     await createAuditLog({
       userId: req.admin._id,
       userType: "Admin",

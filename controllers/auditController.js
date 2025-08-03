@@ -1,7 +1,6 @@
 import auditLogModel from "../models/auditLogModel.js";
 import { createAuditLog } from "../middleware/auditLogger.js";
 
-// Get audit logs with basic filtering
 const getAuditLogs = async (req, res) => {
   try {
     const {
@@ -15,11 +14,9 @@ const getAuditLogs = async (req, res) => {
       userEmail,
     } = req.query;
 
-    // Validate pagination
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
 
-    // Build search parameters
     const searchParams = {
       page: pageNum,
       limit: limitNum,
@@ -31,13 +28,11 @@ const getAuditLogs = async (req, res) => {
       userEmail,
     };
 
-    // Get total count for pagination
     let countQuery = {};
     if (startDate || endDate) {
       countQuery.createdAt = {};
       if (startDate) countQuery.createdAt.$gte = new Date(startDate);
       if (endDate) {
-        // Add 23:59:59.999 to include the entire end date
         const endDateTime = new Date(endDate);
         endDateTime.setHours(23, 59, 59, 999);
         countQuery.createdAt.$lte = endDateTime;
@@ -51,10 +46,8 @@ const getAuditLogs = async (req, res) => {
     const totalLogs = await auditLogModel.countDocuments(countQuery);
     const totalPages = Math.ceil(totalLogs / limitNum);
 
-    // Get logs using the search method
     const logs = await auditLogModel.searchLogs(searchParams);
 
-    // Log admin's audit log access
     await createAuditLog({
       userId: req.admin._id,
       userType: "Admin",
@@ -96,16 +89,13 @@ const getAuditLogs = async (req, res) => {
   }
 };
 
-// Get basic audit statistics
 const getAuditStats = async (req, res) => {
   try {
     const { days = 7 } = req.query;
 
-    // Calculate date range
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - parseInt(days));
 
-    // Basic statistics
     const totalLogs = await auditLogModel.countDocuments({
       createdAt: { $gte: startDate },
     });
@@ -120,7 +110,6 @@ const getAuditStats = async (req, res) => {
       status: "FAILURE",
     });
 
-    // Top actions
     const topActions = await auditLogModel.aggregate([
       { $match: { createdAt: { $gte: startDate } } },
       { $group: { _id: "$action", count: { $sum: 1 } } },
@@ -128,13 +117,11 @@ const getAuditStats = async (req, res) => {
       { $limit: 5 },
     ]);
 
-    // User type distribution
     const userTypeStats = await auditLogModel.aggregate([
       { $match: { createdAt: { $gte: startDate } } },
       { $group: { _id: "$userType", count: { $sum: 1 } } },
     ]);
 
-    // Log admin's stats access
     await createAuditLog({
       userId: req.admin._id,
       userType: "Admin",
@@ -177,7 +164,6 @@ const getAuditStats = async (req, res) => {
   }
 };
 
-// Simple export functionality
 const exportAuditLogs = async (req, res) => {
   try {
     const {
@@ -188,13 +174,11 @@ const exportAuditLogs = async (req, res) => {
       maxRecords = 1000,
     } = req.query;
 
-    // Build query
     let query = {};
     if (startDate || endDate) {
       query.createdAt = {};
       if (startDate) query.createdAt.$gte = new Date(startDate);
       if (endDate) {
-        // Add 23:59:59.999 to include the entire end date
         const endDateTime = new Date(endDate);
         endDateTime.setHours(23, 59, 59, 999);
         query.createdAt.$lte = endDateTime;
@@ -209,7 +193,6 @@ const exportAuditLogs = async (req, res) => {
       .limit(parseInt(maxRecords))
       .lean();
 
-    // Generate simple CSV
     const csvHeaders = [
       "Date",
       "User Email",
@@ -235,7 +218,6 @@ const exportAuditLogs = async (req, res) => {
       ...csvRows.map((row) => row.join(",")),
     ].join("\n");
 
-    // Log the export
     await createAuditLog({
       userId: req.admin._id,
       userType: "Admin",
@@ -271,7 +253,6 @@ const exportAuditLogs = async (req, res) => {
   }
 };
 
-// Get available filter options
 const getFilterOptions = async (req, res) => {
   try {
     const [actions, userTypes, statuses] = await Promise.all([
@@ -303,19 +284,16 @@ const getFilterOptions = async (req, res) => {
   }
 };
 
-// Get security events (NoSQL injection attempts, etc.)
 const getSecurityEvents = async (req, res) => {
   try {
     const { page = 1, limit = 50, hours = 24 } = req.query;
 
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
-    const hoursNum = Math.min(168, Math.max(1, parseInt(hours))); // Max 7 days
+    const hoursNum = Math.min(168, Math.max(1, parseInt(hours)));
 
-    // Calculate time range
     const timeRange = new Date(Date.now() - hoursNum * 60 * 60 * 1000);
 
-    // Get security events
     const securityEvents = await auditLogModel
       .find({
         action: { $regex: /^SECURITY_/ },
@@ -326,13 +304,11 @@ const getSecurityEvents = async (req, res) => {
       .skip((pageNum - 1) * limitNum)
       .lean();
 
-    // Get summary statistics
     const totalEvents = await auditLogModel.countDocuments({
       action: { $regex: /^SECURITY_/ },
       createdAt: { $gte: timeRange },
     });
 
-    // Group by event type
     const eventTypes = await auditLogModel.aggregate([
       {
         $match: {
@@ -350,7 +326,6 @@ const getSecurityEvents = async (req, res) => {
       { $sort: { count: -1 } },
     ]);
 
-    // Get top IPs with security events
     const topIPs = await auditLogModel.aggregate([
       {
         $match: {

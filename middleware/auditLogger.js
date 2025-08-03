@@ -1,8 +1,6 @@
 import auditLogModel from "../models/auditLogModel.js";
 import userModel from "../models/userModel.js";
 import { logActivity, logError } from "../utils/logger.js";
-
-// Simple audit logging function
 export const createAuditLog = async (logData) => {
   try {
     const {
@@ -18,7 +16,6 @@ export const createAuditLog = async (logData) => {
       metadata = {},
     } = logData;
 
-    // Create simple audit log entry
     const auditLog = new auditLogModel({
       userId,
       userType,
@@ -34,7 +31,6 @@ export const createAuditLog = async (logData) => {
 
     await auditLog.save();
 
-    // Also log to Winston for immediate monitoring
     logActivity(userId, action, description, ipAddress);
 
     return auditLog;
@@ -43,15 +39,11 @@ export const createAuditLog = async (logData) => {
     console.error("Audit logging failed:", error);
   }
 };
-
-// Simple middleware to automatically log API requests
 export const auditMiddleware = () => {
   return async (req, res, next) => {
-    // Store original res.end to capture when response completes
     const originalEnd = res.end;
     res.end = async function (...args) {
       try {
-        // Skip health checks and static files
         const skipPatterns = [
           "/health",
           "/ping",
@@ -63,22 +55,17 @@ export const auditMiddleware = () => {
         );
 
         if (!shouldSkip && req.originalUrl.startsWith("/api/")) {
-          // Determine action based on method and path
           const action = determineAction(req.method, req.originalUrl);
 
-          // Get user info from request - handle both auth patterns
           let userId = null;
           let userType = "Anonymous";
           let userEmail = "anonymous";
 
-          // Check for admin authentication (sets req.admin)
           if (req.admin) {
             userId = req.admin._id;
             userType = "Admin";
             userEmail = req.admin.email;
-          }
-          // Check for user authentication (sets req.body.userId)
-          else if (req.body?.userId) {
+          } else if (req.body?.userId) {
             try {
               const user = await userModel.findById(req.body.userId);
               if (user) {
@@ -91,10 +78,8 @@ export const auditMiddleware = () => {
             }
           }
 
-          // Determine status
           const status = res.statusCode >= 400 ? "FAILURE" : "SUCCESS";
 
-          // Only log if we have a user (authenticated requests) OR it's a significant unauthenticated action
           const isSignificantUnauthenticatedAction =
             !userId &&
             (req.originalUrl.includes("/register") ||
@@ -129,24 +114,19 @@ export const auditMiddleware = () => {
     next();
   };
 };
-
-// Helper function to determine action from method and path
 const determineAction = (method, path) => {
   const pathLower = path.toLowerCase();
 
-  // Authentication routes
   if (pathLower.includes("/login")) return "LOGIN";
   if (pathLower.includes("/logout")) return "LOGOUT";
   if (pathLower.includes("/register")) return "REGISTER";
 
-  // Admin routes
   if (pathLower.includes("/admin")) {
     if (pathLower.includes("/login")) return "ADMIN_LOGIN";
     if (pathLower.includes("/logout")) return "ADMIN_LOGOUT";
     return "ADMIN_ACTION";
   }
 
-  // Product routes
   if (pathLower.includes("/product")) {
     switch (method) {
       case "POST":
@@ -160,7 +140,6 @@ const determineAction = (method, path) => {
     }
   }
 
-  // Order routes
   if (pathLower.includes("/order")) {
     switch (method) {
       case "POST":
@@ -172,7 +151,6 @@ const determineAction = (method, path) => {
     }
   }
 
-  // Cart routes
   if (pathLower.includes("/cart")) {
     switch (method) {
       case "POST":
@@ -186,19 +164,14 @@ const determineAction = (method, path) => {
     }
   }
 
-  // Profile routes
   if (pathLower.includes("/profile")) {
     return method === "PUT" ? "PROFILE_UPDATE" : "PROFILE_VIEW";
   }
 
-  // File upload
   if (pathLower.includes("/upload")) return "FILE_UPLOAD";
 
-  // Default action
   return "API_REQUEST";
 };
-
-// Function to log specific events (to be called from controllers)
 export const logUserAction = async (
   user,
   action,

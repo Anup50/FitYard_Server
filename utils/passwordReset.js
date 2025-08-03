@@ -1,21 +1,18 @@
 import crypto from "crypto";
 import sendOtpEmail from "./sendOtpEmail.js";
 
-// Generate secure reset token
 export const generateResetToken = () => {
   return crypto.randomBytes(32).toString("hex");
 };
 
-// Generate reset OTP
 export const generateResetOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send password reset email
 export const sendPasswordResetEmail = async (email, resetToken, resetUrl) => {
   const resetLink = `${resetUrl}?token=${resetToken}&email=${email}`;
 
-  // Create a well-formatted HTML email
+  //HTML email
   const emailContent = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8f9fa;">
       <div style="background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
@@ -94,7 +91,6 @@ export const sendPasswordResetEmail = async (email, resetToken, resetUrl) => {
     </div>
   `;
 
-  // Fallback plain text version
   const textContent = `
 FitYard - Password Reset Request
 
@@ -125,7 +121,6 @@ FitYard Team
   );
 };
 
-// Check if password meets complexity requirements
 export const validatePasswordStrength = (password) => {
   const minLength = 8;
   const hasUpper = /[A-Z]/.test(password);

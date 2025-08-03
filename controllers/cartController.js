@@ -4,11 +4,10 @@ import {
   logSecurityEvent,
 } from "../middleware/security.js";
 
-// Admin: GET all user carts
 export const getAllUserCarts = async (req, res) => {
   try {
     const users = await userModel.find({}, "_id name email cartData");
-    // Combine all cart data into one object for frontend compatibility
+
     let combinedCartData = {};
     users.forEach((user) => {
       if (user.cartData) {
@@ -22,12 +21,10 @@ export const getAllUserCarts = async (req, res) => {
   }
 };
 
-// Admin: GET any user's cart by userId
 export const getAnyUserCart = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Validate and sanitize user ID
     let sanitizedUserId;
     try {
       sanitizedUserId = validateAndSanitizeInput(userId, "id");
@@ -62,7 +59,6 @@ export const addToCart = async (req, res) => {
   try {
     const { userId, itemId, size } = req.body;
 
-    // Validate and sanitize inputs
     let sanitizedUserId, sanitizedItemId, sanitizedSize;
     try {
       sanitizedUserId = validateAndSanitizeInput(userId, "id");
@@ -114,14 +110,12 @@ export const updateCart = async (req, res) => {
   try {
     const { userId, itemId, size, quantity } = req.body;
 
-    // Validate and sanitize inputs
     let sanitizedUserId, sanitizedItemId, sanitizedSize;
     try {
       sanitizedUserId = validateAndSanitizeInput(userId, "id");
       sanitizedItemId = validateAndSanitizeInput(itemId, "id");
       sanitizedSize = validateAndSanitizeInput(size, "default");
 
-      // Validate quantity
       const quantityNum = Number(quantity);
       if (isNaN(quantityNum) || quantityNum < 0) {
         throw new Error("Quantity must be a non-negative number");
@@ -172,7 +166,6 @@ export const getUserCart = async (req, res) => {
   try {
     const { userId, role } = req.body;
 
-    // Validate and sanitize inputs
     let sanitizedUserId;
     try {
       sanitizedUserId = validateAndSanitizeInput(userId, "id");
@@ -205,7 +198,7 @@ export const getUserCart = async (req, res) => {
         message: "User not found or not a regular user.",
       });
     }
-    // If cartData is null or undefined, return empty cart
+
     const cartData = userData.cartData || {};
 
     res.json({ success: true, cartData });

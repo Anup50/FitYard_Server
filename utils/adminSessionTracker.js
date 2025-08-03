@@ -1,22 +1,19 @@
 import { logActivity, logError } from "./logger.js";
 
-// In-memory storage for session tracking (use Redis in production)
 const adminSessions = new Map();
 const suspiciousActivityAlerts = new Map();
 
-// Configuration for suspicious activity thresholds
 const SUSPICIOUS_ACTIVITY_CONFIG = {
-  MAX_FAILED_LOGINS: 3, // Max failed attempts before flagging
-  MAX_SESSIONS_PER_ADMIN: 3, // Max concurrent sessions
-  UNUSUAL_HOUR_START: 23, // 11 PM
-  UNUSUAL_HOUR_END: 6, // 6 AM
-  MAX_ACTIONS_PER_MINUTE: 20, // Rate limiting for admin actions
-  LOCATION_CHANGE_THRESHOLD: 100, // Miles (rough IP geolocation)
-  SESSION_TIMEOUT: 30 * 60 * 1000, // 30 minutes
+  MAX_FAILED_LOGINS: 3,
+  MAX_SESSIONS_PER_ADMIN: 3,
+  UNUSUAL_HOUR_START: 23,
+  UNUSUAL_HOUR_END: 6,
+  MAX_ACTIONS_PER_MINUTE: 20,
+  LOCATION_CHANGE_THRESHOLD: 100,
+  SESSION_TIMEOUT: 30 * 60 * 1000,
 };
 
 const adminSessionTracker = {
-  // Track admin login attempts and sessions
   trackLogin: (adminId, ip, userAgent, loginSuccess = true) => {
     const now = new Date();
     const sessionKey = `${adminId}-${ip}`;
@@ -34,7 +31,6 @@ const adminSessionTracker = {
     const adminData = adminSessions.get(adminId);
 
     if (loginSuccess) {
-      // Record successful login session
       const newSession = {
         sessionId: `session_${Date.now()}_${Math.random()
           .toString(36)
@@ -48,14 +44,12 @@ const adminSessionTracker = {
 
       adminData.sessions.push(newSession);
 
-      // Clean up old sessions
       adminData.sessions = adminData.sessions.filter(
         (session) =>
           now - session.loginTime <
             SUSPICIOUS_ACTIVITY_CONFIG.SESSION_TIMEOUT || session.isActive
       );
 
-      // Check for suspicious patterns
       adminSessionTracker.detectSuspiciousActivity(adminId);
 
       logActivity("ADMIN_LOGIN_SUCCESS", "Admin logged in successfully", {
@@ -66,7 +60,6 @@ const adminSessionTracker = {
         activeSessionCount: adminData.sessions.filter((s) => s.isActive).length,
       });
     } else {
-      // Record failed login attempt
       adminData.failedAttempts.push({
         ip,
         userAgent,
@@ -74,13 +67,11 @@ const adminSessionTracker = {
         reason: "Invalid credentials",
       });
 
-      // Clean up old failed attempts (older than 1 hour)
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
       adminData.failedAttempts = adminData.failedAttempts.filter(
         (attempt) => attempt.timestamp > oneHourAgo
       );
 
-      // Check for brute force attempts
       adminSessionTracker.detectBruteForce(adminId);
 
       logActivity("ADMIN_LOGIN_FAILED", "Admin login failed", {
@@ -92,17 +83,15 @@ const adminSessionTracker = {
     }
   },
 
-  // Track admin actions for rate limiting and pattern analysis
   trackAction: (adminId, action, ip, details = {}) => {
     const now = new Date();
 
     if (!adminSessions.has(adminId)) {
-      return; // Admin not logged in
+      return;
     }
 
     const adminData = adminSessions.get(adminId);
 
-    // Record the action
     adminData.actionHistory.push({
       action,
       ip,
@@ -110,20 +99,17 @@ const adminSessionTracker = {
       details,
     });
 
-    // Keep only last hour of actions
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
     adminData.actionHistory = adminData.actionHistory.filter(
       (actionRecord) => actionRecord.timestamp > oneHourAgo
     );
 
-    // Update last activity for active sessions
     adminData.sessions.forEach((session) => {
       if (session.ip === ip && session.isActive) {
         session.lastActivity = now;
       }
     });
 
-    // Check for suspicious activity patterns
     adminSessionTracker.detectSuspiciousActivity(adminId);
 
     logActivity("ADMIN_ACTION_TRACKED", `Admin performed action: ${action}`, {
@@ -135,7 +121,6 @@ const adminSessionTracker = {
     });
   },
 
-  // Main suspicious activity detection function
   detectSuspiciousActivity: (adminId) => {
     if (!adminSessions.has(adminId)) {
       return [];
@@ -145,7 +130,6 @@ const adminSessionTracker = {
     const suspiciousIndicators = [];
     const now = new Date();
 
-    // 1. Multiple concurrent sessions from different IPs
     const activeSessions = adminData.sessions.filter((s) => s.isActive);
     const uniqueIPs = new Set(activeSessions.map((s) => s.ip));
 
@@ -159,9 +143,8 @@ const adminSessionTracker = {
       });
     }
 
-    // 2. Unusual login hours (late night/early morning)
     const recentLogins = adminData.sessions.filter(
-      (session) => now - session.loginTime < 60 * 60 * 1000 // Last hour
+      (session) => now - session.loginTime < 60 * 60 * 1000
     );
 
     recentLogins.forEach((session) => {
@@ -180,7 +163,6 @@ const adminSessionTracker = {
       }
     });
 
-    // 3. Rapid-fire actions (possible automation/bot)
     const oneMinuteAgo = new Date(now.getTime() - 60 * 1000);
     const recentActions = adminData.actionHistory.filter(
       (action) => action.timestamp > oneMinuteAgo
@@ -198,7 +180,6 @@ const adminSessionTracker = {
       });
     }
 
-    // 4. User-Agent switching (possible session hijacking)
     const recentUserAgents = new Set(activeSessions.map((s) => s.userAgent));
 
     if (recentUserAgents.size > 2) {
@@ -211,7 +192,6 @@ const adminSessionTracker = {
       });
     }
 
-    // 5. Unusual action patterns
     const sensitiveActions = adminData.actionHistory.filter((action) =>
       ["DELETE_PRODUCT", "UPDATE_ORDER_STATUS", "CREATE_ADMIN"].includes(
         action.action
@@ -219,7 +199,7 @@ const adminSessionTracker = {
     );
 
     const recentSensitiveActions = sensitiveActions.filter(
-      (action) => now - action.timestamp < 10 * 60 * 1000 // Last 10 minutes
+      (action) => now - action.timestamp < 10 * 60 * 1000
     );
 
     if (recentSensitiveActions.length > 5) {
@@ -232,18 +212,15 @@ const adminSessionTracker = {
       });
     }
 
-    // 6. Geographic anomalies (basic IP-based detection)
     adminSessionTracker.detectGeographicAnomalies(
       adminId,
       adminData,
       suspiciousIndicators
     );
 
-    // Store suspicious indicators
     if (suspiciousIndicators.length > 0) {
       adminData.suspiciousFlags.push(...suspiciousIndicators);
 
-      // Alert for high-severity issues
       const highSeverityAlerts = suspiciousIndicators.filter(
         (indicator) => indicator.severity === "HIGH"
       );
@@ -266,7 +243,6 @@ const adminSessionTracker = {
     return suspiciousIndicators;
   },
 
-  // Detect brute force login attempts
   detectBruteForce: (adminId) => {
     if (!adminSessions.has(adminId)) {
       return false;
@@ -274,7 +250,7 @@ const adminSessionTracker = {
 
     const adminData = adminSessions.get(adminId);
     const recentFailures = adminData.failedAttempts.filter(
-      (attempt) => new Date() - attempt.timestamp < 15 * 60 * 1000 // Last 15 minutes
+      (attempt) => new Date() - attempt.timestamp < 15 * 60 * 1000
     );
 
     if (recentFailures.length >= SUSPICIOUS_ACTIVITY_CONFIG.MAX_FAILED_LOGINS) {
@@ -365,14 +341,12 @@ const adminSessionTracker = {
       }
     );
 
-    // Auto-actions for critical alerts
     const criticalAlerts = alerts.filter((a) => a.severity === "CRITICAL");
     if (criticalAlerts.length > 0) {
       adminSessionTracker.handleCriticalAlert(adminId, criticalAlerts);
     }
   },
 
-  // Handle critical security incidents
   handleCriticalAlert: (adminId, criticalAlerts) => {
     console.log(
       `🔴 CRITICAL ALERT: Taking automatic security actions for Admin ${adminId}`
@@ -380,7 +354,6 @@ const adminSessionTracker = {
 
     const adminData = adminSessions.get(adminId);
     if (adminData) {
-      // Force logout all active sessions
       adminData.sessions.forEach((session) => {
         session.isActive = false;
         session.terminatedReason = "SECURITY_INCIDENT";
@@ -428,7 +401,7 @@ const adminSessionTracker = {
   calculateRiskLevel: (adminData) => {
     const now = new Date();
     const recentFlags = adminData.suspiciousFlags.filter(
-      (flag) => now - flag.timestamp < 24 * 60 * 60 * 1000 // Last 24 hours
+      (flag) => now - flag.timestamp < 24 * 60 * 60 * 1000
     );
 
     const criticalCount = recentFlags.filter(
@@ -468,7 +441,6 @@ const adminSessionTracker = {
         (flag) => flag.timestamp > oneDayAgo
       );
 
-      // Remove admin data if no recent activity
       if (
         adminData.sessions.length === 0 &&
         adminData.failedAttempts.length === 0 &&
@@ -478,7 +450,6 @@ const adminSessionTracker = {
       }
     });
 
-    // Clean old alerts
     suspiciousActivityAlerts.forEach((alert, alertKey) => {
       if (alert.timestamp < oneDayAgo) {
         suspiciousActivityAlerts.delete(alertKey);
@@ -487,7 +458,6 @@ const adminSessionTracker = {
   },
 };
 
-// Run cleanup every hour
 setInterval(() => {
   adminSessionTracker.cleanup();
 }, 60 * 60 * 1000);

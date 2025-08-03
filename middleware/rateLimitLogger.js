@@ -3,7 +3,7 @@ import { createAuditLog } from "./auditLogger.js";
 
 export const createRateLimitWithLogging = (options = {}) => {
   const {
-    windowMs = 15 * 60 * 1000, // 15 minutes
+    windowMs = 15 * 60 * 1000,
     max = 100,
     message = "Too many requests",
     actionType = "RATE_LIMIT_VIOLATION",
@@ -74,8 +74,8 @@ export const loginRateLimit = createRateLimitWithLogging({
 });
 
 export const generalRateLimit = createRateLimitWithLogging({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requests per IP
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: "Too many requests, please try again later",
   actionType: "GENERAL_RATE_LIMIT_VIOLATION",
 });
@@ -89,25 +89,23 @@ export const adminRateLimit = createRateLimitWithLogging({
 });
 
 export const auditRateLimit = createRateLimitWithLogging({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 20, // 20 audit requests per 5 minutes
+  windowMs: 5 * 60 * 1000,
+  max: 20,
   message: "Too many audit requests, please try again later",
   actionType: "AUDIT_RATE_LIMIT_VIOLATION",
   userType: "Admin",
 });
 
-// Registration rate limiting
 export const registrationRateLimit = createRateLimitWithLogging({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3, // 3 registration attempts per hour
+  windowMs: 60 * 60 * 1000,
+  max: 3,
   message: "Too many registration attempts, please try again later",
   actionType: "REGISTRATION_RATE_LIMIT_VIOLATION",
 });
 
-// Password reset rate limiting
 export const passwordResetRateLimit = createRateLimitWithLogging({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 3, // 3 password reset attempts per IP
+  windowMs: 15 * 60 * 1000,
+  max: 3,
   message: "Too many password reset attempts, please try again later",
   actionType: "PASSWORD_RESET_RATE_LIMIT_VIOLATION",
 });

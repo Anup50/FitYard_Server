@@ -83,7 +83,6 @@ userRouter.post(
   registerAdmin
 );
 
-// Password management routes
 userRouter.post(
   "/update-password",
   authUser,
@@ -100,7 +99,6 @@ userRouter.get(
   getPasswordStatus
 );
 
-// Admin only - force password change
 userRouter.post(
   "/admin/force-password-change",
   adminAuth,

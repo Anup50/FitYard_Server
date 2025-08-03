@@ -12,7 +12,6 @@ const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY)
   : null;
 
-// PLACING ORDERS USING COD
 export const placeOrder = async (req, res) => {
   try {
     const { userId, items, amount, address } = req.body;
@@ -39,7 +38,6 @@ export const placeOrder = async (req, res) => {
   }
 };
 
-// PLACING ORDERS USING STRIPE
 export const placeOrderStripe = async (req, res) => {
   try {
     const { userId, items, amount, address } = req.body;
@@ -114,10 +112,8 @@ export const verifyStripe = async (req, res) => {
   }
 };
 
-// PLACING ORDERS USING RAZORPAY
 export const placeOrderRazorpay = async (req, res) => {};
 
-//ALL ORDERS DATA FOR ADMIN PANEL
 export const allOrders = async (req, res) => {
   try {
     const orders = await orderModel.find();
@@ -128,7 +124,6 @@ export const allOrders = async (req, res) => {
   }
 };
 
-//USER ORDERS DATA FOR FRONTEND
 export const userOrders = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -142,20 +137,15 @@ export const userOrders = async (req, res) => {
   }
 };
 
-//UPDATE ORDER STATUS FROM ADMIN PANEL
 export const updateStatus = async (req, res) => {
   try {
-    // Only admins should reach here (checked by adminAuth middleware)
     const { orderId, status } = req.body;
 
-    // Get the order before updating to track the change
     const existingOrder = await orderModel.findById(orderId);
     const oldStatus = existingOrder?.status || "Unknown";
 
-    // Update order status
     await orderModel.findByIdAndUpdate(orderId, { status });
 
-    // Track admin action for order status update
     if (req.admin && req.admin.id) {
       adminSessionTracker.trackAction(
         req.admin.id,

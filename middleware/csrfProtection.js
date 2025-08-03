@@ -13,7 +13,7 @@ export const setCsrfToken = (req, res, next) => {
   csrfTokens.set(sessionId, token);
 
   res.cookie("_csrf", token, {
-    httpOnly: false, // Frontend needs to read this
+    httpOnly: false,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
     maxAge: 3600000, // 1 hour
@@ -27,10 +27,8 @@ export const getCsrfToken = (req, res) => {
   const token = generateCsrfToken();
   const sessionId = req.sessionID || req.ip + req.get("User-Agent");
 
-  // Store token
   csrfTokens.set(sessionId, token);
 
-  // Set in cookie and return in response
   res.cookie("_csrf", token, {
     httpOnly: false,
     secure: process.env.NODE_ENV === "production",
@@ -46,7 +44,6 @@ export const getCsrfToken = (req, res) => {
 };
 
 export const csrfProtection = (req, res, next) => {
-  // Skip CSRF for safe methods
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     return next();
   }
@@ -75,5 +72,4 @@ export const cleanupExpiredTokens = () => {
   }
 };
 
-// Auto cleanup every hour
 setInterval(cleanupExpiredTokens, 3600000);

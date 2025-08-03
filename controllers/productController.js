@@ -6,7 +6,6 @@ import {
   logSecurityEvent,
 } from "../middleware/security.js";
 
-// function for add product
 export const addProduct = async (req, res) => {
   try {
     const {
@@ -19,7 +18,6 @@ export const addProduct = async (req, res) => {
       bestSeller,
     } = req.body;
 
-    // Validate and sanitize inputs
     let sanitizedName,
       sanitizedDescription,
       sanitizedCategory,
@@ -31,13 +29,11 @@ export const addProduct = async (req, res) => {
       sanitizedCategory = validateAndSanitizeInput(category, "name");
       sanitizedSubCategory = validateAndSanitizeInput(subCategory, "name");
 
-      // Validate price
       const priceNum = Number(price);
       if (isNaN(priceNum) || priceNum <= 0) {
         throw new Error("Price must be a positive number");
       }
 
-      // Validate sizes (should be valid JSON)
       JSON.parse(sizes);
     } catch (validationError) {
       await logSecurityEvent(
@@ -87,7 +83,6 @@ export const addProduct = async (req, res) => {
 
     await product.save();
 
-    // Track admin action for adding product
     if (req.admin && req.admin.id) {
       adminSessionTracker.trackAction(req.admin.id, "ADD_PRODUCT", req.ip, {
         productName: sanitizedName,
@@ -104,7 +99,6 @@ export const addProduct = async (req, res) => {
   }
 };
 
-// function for list product
 export const listProduct = async (req, res) => {
   try {
     const products = await productModel.find({});
@@ -115,7 +109,6 @@ export const listProduct = async (req, res) => {
   }
 };
 
-// function for remove product
 export const removeProduct = async (req, res) => {
   try {
     console.log("Remove product request:", {
@@ -127,7 +120,6 @@ export const removeProduct = async (req, res) => {
 
     const { id } = req.params;
 
-    // Check if ID is provided
     if (!id) {
       console.log("No ID provided in params");
       return res.status(400).json({
@@ -138,7 +130,6 @@ export const removeProduct = async (req, res) => {
 
     console.log("Product ID from params:", id);
 
-    // Validate and sanitize product ID
     let sanitizedProductId;
     try {
       sanitizedProductId = validateAndSanitizeInput(id, "id");
@@ -167,7 +158,6 @@ export const removeProduct = async (req, res) => {
 
     await productModel.findByIdAndDelete(sanitizedProductId);
 
-    // Track admin action for removing product
     if (req.admin && req.admin.id) {
       adminSessionTracker.trackAction(req.admin.id, "DELETE_PRODUCT", req.ip, {
         productId: sanitizedProductId,
@@ -182,12 +172,10 @@ export const removeProduct = async (req, res) => {
   }
 };
 
-// function for single product info
 export const singleProduct = async (req, res) => {
   try {
     const { productId } = req.body;
 
-    // Validate and sanitize product ID
     let sanitizedProductId;
     try {
       sanitizedProductId = validateAndSanitizeInput(productId, "id");

@@ -2,10 +2,9 @@ import mongoose from "mongoose";
 
 const auditLogSchema = new mongoose.Schema(
   {
-    // User Information
     userId: {
       type: mongoose.Schema.Types.ObjectId,
-      required: false, // Allow null for anonymous users
+      required: false,
     },
     userType: {
       type: String,
@@ -17,7 +16,6 @@ const auditLogSchema = new mongoose.Schema(
       required: true,
     },
 
-    // Action performed
     action: {
       type: String,
       required: true,
@@ -51,7 +49,7 @@ const auditLogSchema = new mongoose.Schema(
         "AUDIT_RATE_LIMIT_VIOLATION",
         "REGISTRATION_RATE_LIMIT_VIOLATION",
         "PASSWORD_RESET_RATE_LIMIT_VIOLATION",
-        // Password management actions
+
         "PASSWORD_CHANGED",
         "PASSWORD_CHANGE_FAILED",
         "PASSWORD_RESET_REQUESTED",
@@ -59,27 +57,25 @@ const auditLogSchema = new mongoose.Schema(
         "PASSWORD_RESET_FAILED",
         "LOGIN_PASSWORD_EXPIRED",
         "ADMIN_FORCE_PASSWORD_CHANGE",
-        // Account lockout actions
+
         "LOGIN_ATTEMPT_LOCKED_ACCOUNT",
         "LOGIN_FAILED_ACCOUNT_LOCKED",
         "LOGIN_FAILED_INVALID_PASSWORD",
         "ADMIN_LOGIN_ATTEMPT_LOCKED_ACCOUNT",
         "ADMIN_LOGIN_FAILED_ACCOUNT_LOCKED",
         "ADMIN_LOGIN_FAILED_INVALID_PASSWORD",
-        // Security events
+
         "SECURITY_NOSQL_INJECTION_BLOCKED",
         "SECURITY_INVALID_INPUT",
       ],
     },
 
-    // What happened
     description: {
       type: String,
       required: true,
       maxlength: 500,
     },
 
-    // Request details
     method: {
       type: String,
       enum: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -88,13 +84,11 @@ const auditLogSchema = new mongoose.Schema(
       type: String,
     },
 
-    // Basic security info
     ipAddress: {
       type: String,
       required: true,
     },
 
-    // Result
     status: {
       type: String,
       required: true,
@@ -102,24 +96,21 @@ const auditLogSchema = new mongoose.Schema(
       default: "SUCCESS",
     },
 
-    // Additional data (optional)
     metadata: {
       type: mongoose.Schema.Types.Mixed,
     },
   },
   {
-    timestamps: true, // Adds createdAt and updatedAt
+    timestamps: true,
     collection: "auditlogs",
   }
 );
 
-// Simple indexes for basic searching
 auditLogSchema.index({ userType: 1, createdAt: -1 });
 auditLogSchema.index({ action: 1, createdAt: -1 });
 auditLogSchema.index({ status: 1, createdAt: -1 });
 auditLogSchema.index({ createdAt: -1 });
 
-// Simple search method for admin filtering
 auditLogSchema.statics.searchLogs = function (searchParams) {
   const {
     startDate,
@@ -134,27 +125,23 @@ auditLogSchema.statics.searchLogs = function (searchParams) {
 
   let query = {};
 
-  // Date range filter
   if (startDate || endDate) {
     query.createdAt = {};
     if (startDate) {
       query.createdAt.$gte = new Date(startDate);
     }
     if (endDate) {
-      // Add 23:59:59.999 to include the entire end date
       const endDateTime = new Date(endDate);
       endDateTime.setHours(23, 59, 59, 999);
       query.createdAt.$lte = endDateTime;
     }
   }
 
-  // Basic filters
   if (userType) query.userType = userType;
   if (action) query.action = action;
   if (status) query.status = status;
   if (userEmail) query.userEmail = new RegExp(userEmail, "i");
 
-  // Debug logging
   console.log("Search Query:", JSON.stringify(query, null, 2));
   console.log("Search Params:", searchParams);
 

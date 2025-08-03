@@ -15,15 +15,10 @@ import {
 
 const auditRouter = express.Router();
 
-// All audit routes require admin authentication
-
-// Get audit logs with basic filtering and pagination
 auditRouter.get("/logs", adminAuth, auditRateLimit, getAuditLogs);
 
-// Get basic audit statistics
 auditRouter.get("/stats", adminAuth, auditRateLimit, getAuditStats);
 
-// Get security events (NoSQL injection attempts, etc.)
 auditRouter.get(
   "/security-events",
   adminAuth,
@@ -31,7 +26,6 @@ auditRouter.get(
   getSecurityEvents
 );
 
-// Export audit logs (CSV) - CSRF protected
 auditRouter.get(
   "/export",
   adminAuth,
@@ -40,7 +34,6 @@ auditRouter.get(
   exportAuditLogs
 );
 
-// Get available filter options for frontend
 auditRouter.get("/filter-options", adminAuth, adminRateLimit, getFilterOptions);
 
 export default auditRouter;
